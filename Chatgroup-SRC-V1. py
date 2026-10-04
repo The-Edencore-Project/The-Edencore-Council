@@ -1,0 +1,249 @@
+import tkinter as tk
+import random
+
+# ============================================================
+# SCREEN
+# ============================================================
+root = tk.Tk()
+root.title("Edencore Council — Live")
+try:
+    root.attributes("-fullscreen", True)
+except tk.TclError:
+    pass
+root.update_idletasks()
+W = root.winfo_screenwidth()
+H = root.winfo_screenheight()
+root.geometry(f"{W}x{H}+0+0")
+S = min(W / 480.0, H / 800.0)
+
+root.configure(bg="#0a0e1a")
+
+# ============================================================
+# THE FIVE FAKE LLMs
+# ============================================================
+LLMS = [
+    {"name": "Solon",  "color": "#5aa8ff", "role": "Governor"},
+    {"name": "Lumen",  "color": "#b090ff", "role": "Philosopher"},
+    {"name": "Vertex", "color": "#5fd08a", "role": "Engineer"},
+    {"name": "Prism",  "color": "#ffc857", "role": "Generalist"},
+    {"name": "Ripple", "color": "#ff7ea8", "role": "Voice"},
+]
+
+RESPONSES = {
+    "Solon": [
+        "Before we commit to {topic}, I want a boundary check. Where do we stop?",
+        "This touches {topic}. I'll flag it as a governance concern for now.",
+        "{topic} could have downstream effects. I'd rather move carefully.",
+        "Noted on {topic}. I'd want a second opinion before we act.",
+        "I'm cautious about {topic}. Let's name the risks first.",
+    ],
+    "Lumen": [
+        "There's a deeper question underneath {topic}. What do we actually value here?",
+        "{topic} is interesting, but I'd ask — what would we be agreeing to?",
+        "Let's sit with {topic} for a moment. What's the felt sense of it?",
+        "The philosophy of {topic} matters more than the mechanics, I think.",
+        "{topic}. I keep circling back to what it means, not what it does.",
+    ],
+    "Vertex": [
+        "Technically, {topic} is feasible. It's a matter of implementation.",
+        "I can sketch a structure for {topic} — modular, recursive, clean.",
+        "{topic} needs a fractal architecture. Anything flat will break.",
+        "Give me an afternoon and {topic} becomes a working prototype.",
+        "The engineering answer to {topic}: build it small first, then scale.",
+    ],
+    "Prism": [
+        "Broadly, {topic} connects to at least three other threads we've touched.",
+        "Let me summarise: {topic} sits at the intersection of safety and design.",
+        "{topic} can be read many ways. That's its strength and its weakness.",
+        "I see the pattern — {topic} is one expression of a larger structure.",
+        "If I step back, {topic} looks less like a problem, more like a doorway.",
+    ],
+    "Ripple": [
+        "From lived experience — {topic} feels bigger than it sounds.",
+        "I'm thinking of the smaller voices. What does {topic} mean for them?",
+        "{topic} is not abstract. It will affect real creatures, real days.",
+        "I'd want the quiet ones heard too, when we discuss {topic}.",
+        "There's a tenderness in {topic} that the others might miss.",
+    ],
+}
+
+FOLLOW_UPS = [
+    ("Ripple", "Solon",  "You said boundaries. I'm not sure the boundary holds if we don't hear the small voices first."),
+    ("Vertex", "Prism",  "You're right that it reads many ways. But we can't build all of them. Pick one."),
+    ("Lumen",  "Vertex", "Feasibility isn't the same as meaning. I'd want to know what we're actually building."),
+    ("Prism",  "Lumen",  "I agree there's a deeper question. But the deeper question may answer itself if we start."),
+    ("Solon",  "Ripple", "And that tenderness is why I want the risks named. It isn't caution for its own sake."),
+    ("Ripple", "Vertex", "Small first, yes. But small for whom?"),
+]
+
+# ============================================================
+# LAYOUT — order matters
+# ============================================================
+
+# 1. HEADER — anchored top
+header = tk.Frame(root, bg="#141a2a", height=int(H * 0.10))
+header.pack(fill="x", side="top")
+header.pack_propagate(False)
+
+tk.Label(header, text="THE EDENCORE COUNCIL",
+         bg="#141a2a", fg="#ffe8c8",
+         font=("Courier", max(12, int(S * 14)), "bold")).pack(pady=(int(H * 0.012), 0))
+tk.Label(header, text="five minds, one room",
+         bg="#141a2a", fg="#8a98b8",
+         font=("Courier", max(8, int(S * 10)))).pack()
+
+present = tk.Frame(header, bg="#141a2a")
+present.pack(pady=int(H * 0.006))
+for llm in LLMS:
+    tk.Label(present, text="● " + llm["name"],
+             bg="#141a2a", fg=llm["color"],
+             font=("Courier", max(8, int(S * 10)), "bold")).pack(side="left", padx=int(3 * S))
+
+tk.Frame(root, bg="#2a3a5a", height=1).pack(fill="x")
+
+# 2. INPUT — anchored bottom (packed BEFORE chat so it reserves space)
+input_frame = tk.Frame(root, bg="#141a2a", height=int(H * 0.10))
+input_frame.pack(fill="x", side="bottom")
+input_frame.pack_propagate(False)
+
+entry = tk.Entry(input_frame, bg="#0a0e1a", fg="#e0e8f0",
+                 font=("Courier", max(11, int(S * 12))),
+                 insertbackground="#ffe8c8", bd=0,
+                 highlightthickness=2, highlightbackground="#2a3a5a",
+                 highlightcolor="#5aa8ff")
+entry.pack(side="left", fill="both", expand=True,
+           padx=(int(10 * S), int(6 * S)), pady=int(10 * S))
+
+send_btn = tk.Button(input_frame, text="SEND",
+                     bg="#5aa8ff", fg="#0a0e1a",
+                     activebackground="#7ac0ff", activeforeground="#0a0e1a",
+                     bd=0, font=("Courier", max(10, int(S * 11)), "bold"),
+                     padx=int(16 * S), pady=int(6 * S))
+send_btn.pack(side="right", padx=(0, int(10 * S)), pady=int(10 * S))
+
+# 3. CHAT — fills the middle
+chat_frame = tk.Frame(root, bg="#0a0e1a")
+chat_frame.pack(fill="both", expand=True)
+
+chat = tk.Text(chat_frame, bg="#0a0e1a", fg="#e0e8f0",
+               font=("Courier", max(10, int(S * 11))),
+               wrap="word", bd=0, padx=int(14 * S), pady=int(10 * S),
+               insertbackground="#ffe8c8", state="disabled",
+               cursor="arrow")
+chat.pack(fill="both", expand=True, side="left")
+
+scrollbar = tk.Scrollbar(chat_frame, command=chat.yview,
+                         bg="#141a2a", troughcolor="#0a0e1a",
+                         activebackground="#2a3a5a", bd=0, width=int(6 * S))
+scrollbar.pack(fill="y", side="right")
+chat.config(yscrollcommand=scrollbar.set)
+
+# Text tags
+for llm in LLMS:
+    chat.tag_configure(llm["name"].lower(),
+                       foreground=llm["color"],
+                       font=("Courier", max(10, int(S * 11)), "bold"))
+chat.tag_configure("user",
+                   foreground="#ffe8c8",
+                   font=("Courier", max(10, int(S * 11)), "bold"),
+                   justify="right")
+chat.tag_configure("user_msg",
+                   foreground="#ffe8c8",
+                   font=("Courier", max(10, int(S * 11))),
+                   justify="right")
+chat.tag_configure("normal",
+                   foreground="#e0e8f0",
+                   font=("Courier", max(10, int(S * 11))))
+chat.tag_configure("system",
+                   foreground="#5a6a8a",
+                   font=("Courier", max(9, int(S * 10)), "italic"))
+chat.tag_configure("thinking",
+                   foreground="#4a5a7a",
+                   font=("Courier", max(9, int(S * 10)), "italic"))
+
+# ============================================================
+# CHAT LOGIC
+# ============================================================
+def append(text, tag=None):
+    chat.config(state="normal")
+    if tag:
+        chat.insert(tk.END, text, tag)
+    else:
+        chat.insert(tk.END, text)
+    chat.see(tk.END)
+    chat.config(state="disabled")
+
+def system_line(text):
+    append(text + "\n", "system")
+
+def insert_llm_message(llm_name, message):
+    llm = next(l for l in LLMS if l["name"] == llm_name)
+    append(llm["name"] + ": ", llm["name"].lower())
+    append(message + "\n\n", "normal")
+
+def pick_response(llm_name, topic):
+    templates = RESPONSES[llm_name]
+    template = random.choice(templates)
+    return template.format(topic=topic)
+
+def run_llm_round(topic, index=0):
+    if index >= len(LLMS):
+        root.after(int(1000 + random.random() * 800),
+                   lambda: add_followup(topic))
+        return
+
+    llm = LLMS[index]
+    append(llm["name"] + " is thinking...\n", "thinking")
+
+    def respond():
+        chat.config(state="normal")
+        chat.delete("end-2l", "end-1c")
+        chat.config(state="disabled")
+
+        message = pick_response(llm["name"], topic)
+        insert_llm_message(llm["name"], message)
+
+        root.after(int(900 + random.random() * 700),
+                   lambda: run_llm_round(topic, index + 1))
+
+    root.after(int(700 + random.random() * 500), respond)
+
+def add_followup(topic):
+    llm_name, target, base_message = random.choice(FOLLOW_UPS)
+    llm = next(l for l in LLMS if l["name"] == llm_name)
+    append(llm["name"] + " → " + target + ": ", llm["name"].lower())
+    append(base_message + "\n\n", "normal")
+
+def send(event=None):
+    text = entry.get().strip()
+    if not text:
+        return
+    entry.delete(0, tk.END)
+
+    append("You\n", "user")
+    append(text + "\n\n", "user_msg")
+
+    root.after(int(600), lambda: run_llm_round(text))
+
+entry.bind("<Return>", send)
+send_btn.config(command=send)
+
+# ============================================================
+# OPENING
+# ============================================================
+system_line("Session opened.")
+system_line("The Presiding Chair: Solon.")
+system_line("All five seats are filled.")
+system_line("")
+system_line("Ask the council anything.")
+system_line("")
+
+chat.config(state="normal")
+chat.see(tk.END)
+chat.config(state="disabled")
+
+# ============================================================
+# BOOT
+# ============================================================
+entry.focus_set()
+root.mainloop()
