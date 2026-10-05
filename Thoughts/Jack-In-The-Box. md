@@ -1,0 +1,110 @@
+Ah — I misunderstood. You're describing something different and much more ambitious: a self-contained reasoning system. The tree is the knowledge. The network is not required. The council deduces from what it holds.
+
+That's a fundamentally different design. And it's worth thinking about honestly, because it sits somewhere between "very feasible" and "one of the hardest problems in AI."
+
+Let me lay out what it actually takes.
+
+---
+
+The Core Idea You're Describing
+
+A tree with enough facts that deductions emerge from within it. Not fetched. Not computed. Derived from the internal structure.
+
+Example:
+
+· Tree holds: France population 68M, France GDP $3T, France is_in Europe, Europe population 750M, Europe has_climate temperate.
+· Council deduces: "France is a small part of Europe by population. Its economy is disproportionately large. This suggests an industrial economy."
+
+Nothing in that deduction was stored. It was inferred from relationships between stored facts. That's the jack-in-the-box.
+
+---
+
+What's Actually Feasible
+
+Here's the math, because the numbers matter.
+
+Small base:
+
+· 200 countries × 10 attributes = 2,000 facts
+· 500 major cities × 5 attributes = 2,500 facts
+· 500 historical events × 4 attributes = 2,000 facts
+· 300 causal rules = 300 facts
+· 200 temporal rules = 200 facts
+· Total: ~7,000 facts
+
+Derivable from that base:
+
+· Transitive containment: If Paris is_in France, and France is_in Europe, then Paris is_in Europe. Every containment chain multiplies. With 100 nested entities × 3 levels, that's 1,000,000 implicit paths.
+· Attribute arithmetic: GDP / population = GDP per capita. If you have 5 numeric attributes per entity, that's 20 combinatorial ratios per entity × 200 entities = 4,000 derived values.
+· Causal chains: If A causes B and B causes C, then A causes C. With 300 rules and depth-3 chains, that's up to 27,000 possible chain paths.
+· Temporal ordering: If event X was before Y, and Y before Z, then X before Z. 500 events × 3 levels = ~125,000 orderings.
+· Comparisons: Country A has more population than B, B more than C, so A more than C. 200 × 199 / 2 = ~20,000 pairs.
+
+Total derivable: well over 100,000 inferable statements from 7,000 stored facts.
+
+That's the jack-in-the-box. The stored facts don't change. The reachable facts grow combinatorially.
+
+---
+
+Where It Breaks
+
+Two hard constraints, honestly stated:
+
+1. Coverage gap. A tree of 7,000 facts can reason deeply about its own domain, but knows nothing outside it. Ask it about a country not in the tree, and it fails. Ask it about a causal rule not defined, and it stops. The tree is only as complete as the areas it covers.
+
+2. Deduction depth. Real reasoning chains break down fast. A depth-3 chain (A→B→C→D) is feasible. Depth-10 chains produce nonsense. Dola's own screenshots mentioned this: "predict 1 step ahead okay, predict 10 steps and it drifts."
+
+So the council can reason three links deep with confidence. Beyond that, it should acknowledge the limits.
+
+---
+
+What This Design Actually Looks Like
+
+Three layers, all offline:
+
+Layer 1 — The Fact Base (V7).
+~7,000 hand-curated facts, in JSON. Countries, cities, events, causal rules. Written by us, or scraped once from Wikidata and then frozen.
+
+Layer 2 — The Deduction Engine (V7/V8).
+Applies the ten primitives to derive implicit facts from stored ones. Handles transitivity, arithmetic, comparison, temporal ordering. Runs on demand — not stored.
+
+Layer 3 — The Causal Engine (V8).
+Chains rules forward. "If X, then Y." Produces narratives, not just values.
+
+Wikipedia becomes optional enrichment. If the tree has the answer, no network needed. If it doesn't, fetch — but the council runs fully offline.
+
+---
+
+The Historical Precedent
+
+This is essentially what Cyc tried to build. Started in 1984, still running. Tens of millions of facts. It's the most ambitious attempt at self-contained symbolic reasoning ever made.
+
+Its lesson: you can't be complete. But you can be deep.
+
+Cyc failed at being a universal knowledge base. But it succeeded at deep reasoning within narrow domains. It could answer questions about geopolitics, medicine, and biology with genuine inference — from stored facts only.
+
+The council doesn't need to be Cyc. It needs to be deep in a small set of domains and honest about its edges.
+
+---
+
+My Recommendation
+
+Yes, build this. But with three rules:
+
+1. Curate, don't scrape. 7,000 facts hand-chosen beat 100,000 auto-scraped facts. Every fact earns its place.
+2. Primitives first, facts second. The ten relationship types are the grammar. Facts are the vocabulary. Get the grammar right, and any fact can be added.
+3. Network is enrichment, not foundation. The council runs fully offline. Wikipedia is a bonus for what's outside the tree.
+
+This changes V7 from "Wiki Tree + Network" to "Self-Contained Tree + Optional Network." That's a stronger design. It means the council has genuine knowledge of its own — not just access to someone else's.
+
+---
+
+The Design Note I'd Add
+
+Design Note 10 — The Self-Contained Knowledge Base (V7)
+
+The World Model does not need the network. It needs a curated base of ~7,000 facts, expressed in the ten primitives, from which >100,000 statements are derivable. The tree reasons three links deep. Beyond that, it stops and says so. Wikipedia and Wikidata are optional enrichment for the edges of the tree, not the foundation of it.
+
+---
+
+Want me to draft Design Note 10 in full? Or do you want to discuss the architecture further before we lock it in?
