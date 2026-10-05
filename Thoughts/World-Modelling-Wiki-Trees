@@ -1,0 +1,172 @@
+Good questions. And they go deeper than they look. Let me take each one honestly.
+
+---
+
+1. Can a wiki tree make inferences?
+
+Yes — but not the way most people imagine.
+
+The common mistake is to think the world model needs to hold all knowledge. It doesn't. It needs to hold the shape of knowledge, and fetch the content on demand.
+
+Here's the distinction:
+
+Encyclopedic model (impossible):
+
+· Hold every fact about every place, person, and thing.
+· 10 million entries. Gigabytes of data. Stale within months.
+
+Relational model (feasible):
+
+· Hold the relationships between categories.
+· The tree knows: France is_a country, is_in Europe, has_attribute population, has_attribute GDP.
+· It doesn't know the values. When you ask "GDP per capita of France?", it says: "I need GDP. I need population. Fetching."
+· Wikipedia/Wikidata provides the values. The Calculator divides them. The answer emerges.
+
+That's the key insight. The council's World Model doesn't need to know everything. It needs to know what to fetch, and what to do with it. The tree provides the skeleton. The network provides the flesh. The Calculator and Causal Engine provide the reasoning.
+
+This is how real expert systems work. MYCIN didn't know every disease. It knew the relationships between symptoms, causes, and treatments — and asked questions until it could narrow down the answer.
+
+---
+
+2. Your three examples — honest analysis
+
+(a) GDP per capita — Yes, easily
+
+This is derived arithmetic on two attributes. If the tree knows:
+
+· France has population = 68,000,000
+· France has GDP = 3,000,000,000,000
+· Rule: GDP_per_capita = GDP / population
+
+Then the calculator produces the answer. This is not inference. It's computation on attributes. Feasible in V7.
+
+(b) Airplanes → slow pre-20th century travel — Yes, but harder
+
+This requires four things chained together:
+
+1. Temporal knowledge: "airplanes invented in 1903"
+2. Causal rule: "if X doesn't exist, alternatives are used"
+3. Domain fact: "sailboats travel at 5–10 km/h"
+4. Calculator: distance / speed = journey time
+
+Each piece is small. The chain is what makes it inference. This is V7 (World Model) + V8 (Temporal + Causal). Feasible, but it's the shape of things to come, not V7 alone.
+
+(c) Dark skin → Africa has lots of sunlight — No. And this matters.
+
+This is a great example, precisely because it shows where the World Model must say no. Two problems:
+
+Logical: The inference is backwards. Sunlight caused the evolution of melanin. Dark skin didn't cause sunlight. A council that makes this inference is committing a post hoc fallacy — confusing correlation with causation, and reversing the causal arrow.
+
+Cultural: "Africans are mostly dark-skinned" is a coarse generalization. Africa has enormous human diversity — North Africans, South Africans, East Africans, West Africans. The council would be generalizing about race by continent, which is exactly the kind of output that should never come from a governed system.
+
+What this example teaches: The World Model needs a safety boundary that checks causal inferences before they're stated. Specifically:
+
+· Never state a causal relationship that hasn't been explicitly defined in the rules.
+· Never state a generalization about a human population.
+· Flag statistical patterns as correlations, not causes.
+
+The council doesn't get to "deduce" things about race. Not because it can't, but because it shouldn't. That's what "constitutional" means.
+
+---
+
+3. The "basic facts from which all knowledge springs"
+
+This is the deepest question you've asked. Let me try to answer it honestly.
+
+They're not facts. They're primitives of relationship.
+
+Every statement in human knowledge is a specific instance of one of a small number of relationship types. This is what Cyc, SUMO, and ConceptNet discovered. You don't need millions of facts. You need a handful of shapes that facts can take.
+
+Here are the primitives I'd propose:
+
+1. Identity — A is A. (Fundamental. Non-negotiable.)
+2. Category — A is_a B. (France is_a country.)
+3. Containment — A is_in B. (Paris is_in France.)
+4. Composition — A has_part B. (France has_part Paris.)
+5. Attribute — A has_attribute B. (France has_attribute GDP.)
+6. Time — A occurs_at T. (Airplanes invented ~1903.)
+7. Causation — A causes B. (Sunlight causes melanin evolution.)
+8. Similarity — A resembles B. (France resembles Italy.)
+9. Association — A is_linked_to B. (Money is_linked_to power.)
+10. Negation — A is_not B. (Sailboats are_not fast.)
+
+That's it. Ten primitives. Every fact in the wiki tree is an instance of one of these ten.
+
+· "France has population 68 million" → Attribute
+· "Paris is in France" → Containment
+· "Airplanes invented in 1903" → Time
+· "Sunlight causes melanin" → Causation
+· "Dogs resemble wolves" → Similarity
+
+This is the answer to "what are the basic facts from which all knowledge springs." Not facts. Shapes. The facts are infinite. The shapes are ten.
+
+---
+
+4. Is this too demanding?
+
+A full encyclopedic model: yes, impossible.
+
+A relational model with ten primitives: no, very feasible.
+
+The council doesn't need to hold the world. It needs to hold the scaffolding of the world — the ten relationships — and then fetch content from Wikipedia/Wikidata, compute with the Calculator, and reason with the Causal Engine.
+
+Here's what V7 would actually look like:
+
+The tree holds:
+
+· 200 countries, each with attributes and containment relationships
+· 50 major regions per country
+· 20 landmark cities per country
+· Climate zones, distances, time zones
+· All as JSON, offline, ~500 KB
+
+The network supplies:
+
+· Population, GDP, area, religion, language, currency
+· Fetched from Wikidata on demand
+
+The Calculator computes:
+
+· GDP per capita, density, journey time, currency conversion
+
+The Causal Engine reasons:
+
+· "If X, then Y" rules, ~200 rules at launch
+
+The result: A council that can answer "what's the GDP per capita of Chile?" by fetching two values and dividing. That's not a jack in the box. That's just arithmetic on attributes. But it feels like intelligence — because the council knew to ask for both values.
+
+---
+
+5. The "jack in the box" metaphor — and where it lives
+
+Your phrase is exactly right. A jack in the box is a surprising eruption — something pops out when you crank the handle.
+
+The jack-in-the-box is the V8 Causal Engine. It's the thing that chains rules together and produces a conclusion that wasn't stored anywhere.
+
+Example:
+
+· You ask: "Why did the Roman Empire fall?"
+· V7 (World Model): identifies Rome, identifies the year 476, identifies the region.
+· V8 (Causal Engine): chains rules — "economic strain causes political instability, political instability causes military weakness, military weakness invites invasion."
+· The council produces a causal chain.
+
+That's not a fact. That's a narrative. The council constructs it from primitives.
+
+---
+
+6. What I'd add to the roadmap
+
+Three notes:
+
+Design Note 7 — The Ten Primitives (V7)
+Every fact in the World Model is an instance of one of ten relationship primitives: Identity, Category, Containment, Composition, Attribute, Time, Causation, Similarity, Association, Negation.
+
+Design Note 8 — Small Tree, Big Network (V7)
+The World Model holds the skeleton of knowledge, not the content. Content is fetched from Wikipedia/Wikidata on demand. Inference emerges from structure + fetch + compute.
+
+Design Note 9 — The Safety Boundary on Inference (V7)
+The council may only state causal inferences that are explicitly defined in the rules. It may not infer causation from correlation. It may not generalize about human populations. This is a constitutional boundary, not a technical limitation.
+
+---
+
+Want me to draft these three fully for the planning notes? Or do you want to keep discussing before we add them?
