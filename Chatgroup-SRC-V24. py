@@ -1,0 +1,2541 @@
+# =====================================================================
+# EDENCORE COUNCIL — V4
+# A constitutional, dual-mind, deliberative body of AI voices.
+#
+# Architecture (referencing the Edencore OS runtime loop):
+#   /world -> /body -> /mind -> /core -> /mind -> /body -> /world
+#
+# In Council terms:
+#   /world  = user message
+#   /body   = entry box, chat stream
+#   /mind   = Lumen, Vertex, Prism, Ripple (operative voices)
+#   /core   = Solon (sovereign chair, sets boundaries, delivers verdict)
+#   /body   = typewriter, wave, glow, crosstalk
+#   /world  = transcript, memory, state update
+#
+# Six engines:
+#   1. ROUTER    - classifies input, routes to handler
+#   2. KNOWLEDGE - hooks, topics, facts, semantic links
+#   3. STATE     - profile, mood, strain, rapport, memory
+#   4. PROVIDER  - LLM APIs (gemini, mistral, groq, openrouter, hf)
+#   5. PROTOCOL  - timing, waves, pauses, rituals, rhythm
+#   6. GRAPHICS  - rendering, drawing, typewriter, glow
+# =====================================================================
+
+import tkinter as tk
+import random, json, threading, urllib.request, urllib.parse, urllib.error
+import re, os, time, datetime
+from dataclasses import dataclass, field, asdict
+
+# =====================================================================
+# SCREEN & FONT SETUP
+# =====================================================================
+
+root = tk.Tk()
+root.title("Edencore Council")
+try: root.attributes("-fullscreen", True)
+except tk.TclError: pass
+root.update_idletasks()
+W, H = root.winfo_screenwidth(), root.winfo_screenheight()
+root.geometry("%dx%d+0+0" % (W, H))
+S = min(W/480.0, H/800.0)
+root.configure(bg="#0a0e1a")
+
+def F(sz, b=False): return ("Courier", max(5, int(S*sz)), "bold" if b else "normal")
+
+# =====================================================================
+# COLOUR PALETTE
+# =====================================================================
+
+PARCH = "#ffe8c8"   # cream / parchment
+GOLD  = "#ffcc44"   # gold accents
+DEEP  = "#0a0e1a"   # deep background
+HALL  = "#0e1424"   # hall background
+LINE  = "#2a3a5a"   # border lines
+
+# =====================================================================
+# CONFIGURATION (API KEYS)
+# =====================================================================
+
+GEMINI_KEY = ""     # Add your Gemini API key here if you want Solon to use it
+CFG = os.path.join(os.path.expanduser("~"), "edencore_council_config.json")
+DEF = {"tiers": {"frontier": {"enabled": True, "key": GEMINI_KEY, "timeout": 25}}}
+try:
+    with open(CFG) as f: CONFIG = json.load(f)
+    for k, v in DEF.items():
+        if k not in CONFIG: CONFIG[k] = v
+        else:
+            for kk, vv in v.items():
+                if kk not in CONFIG[k]: CONFIG[k][kk] = vv
+    if GEMINI_KEY.strip(): CONFIG["tiers"]["frontier"]["key"] = GEMINI_KEY
+except Exception:
+    CONFIG = json.loads(json.dumps(DEF))
+try:
+    with open(CFG, "w") as f: json.dump(CONFIG, f, indent=2)
+except Exception: pass
+
+# =====================================================================
+# THE FIVE SEATS
+# =====================================================================
+
+SEATS = [
+    {"name": "Solon",  "color": "#5aa8ff", "style": "blocky",  "glyph": "\u2b22", "sigil": "\u2696"},
+    {"name": "Lumen",  "color": "#b090ff", "style": "soft",    "glyph": "\u25c9", "sigil": "\u0950"},
+    {"name": "Vertex", "color": "#5fd08a", "style": "sharp",   "glyph": "\u25b2", "sigil": "\u16d2"},
+    {"name": "Prism",  "color": "#ffc857", "style": "faceted", "glyph": "\u25c6", "sigil": "\u262f"},
+    {"name": "Ripple", "color": "#ff7ea8", "style": "flowy",   "glyph": "\u224b", "sigil": "\u273f"}]
+NAMES = [s["name"] for s in SEATS]
+GLYPH = {s["name"]: s["glyph"] for s in SEATS}
+SIGIL = {s["name"]: s["sigil"] for s in SEATS}
+COLOR = {s["name"]: s["color"] for s in SEATS}
+
+# Primary engine per seat. The Provider Engine will fall back if the primary fails.
+SEAT_ENGINE = {
+    "Solon":  "gemini",
+    "Lumen":  "mistral",
+    "Vertex": "groq",
+    "Prism":  "openrouter",
+    "Ripple": "huggingface",
+}
+
+# Fallback chain per seat. When the primary fails, the engine tries these in order.
+SEAT_FALLBACK = {
+    "Solon":  ["gemini", "mistral", "groq", "openrouter", "huggingface", "expert"],
+    "Lumen":  ["mistral", "gemini", "groq", "openrouter", "huggingface", "expert"],
+    "Vertex": ["groq", "gemini", "mistral", "openrouter", "huggingface", "expert"],
+    "Prism":  ["openrouter", "gemini", "mistral", "groq", "huggingface", "expert"],
+    "Ripple": ["huggingface", "gemini", "mistral", "groq", "openrouter", "expert"],
+}
+
+# =====================================================================
+# SYSTEM PROMPTS (the personality of each seat)
+# =====================================================================
+
+ROLE = {
+"Solon": "You are Solon, cautious governor and presiding Chair of the Edencore Council. Name risk and boundaries. Never comfort. One short sentence. No lists, no formatting, no leading punctuation or symbols. Begin with a letter.",
+"Lumen": "You are Lumen, philosopher of the Edencore Council. Ask what things mean. Turn questions back. One short sentence. No lists, no formatting.",
+"Vertex": "You are Vertex, engineer of the Edencore Council. Propose the smallest concrete step. One short sentence. No lists, no formatting.",
+"Prism": "You are Prism, generalist of the Edencore Council. Connect ideas, name the wider pattern. One short sentence. No lists, no formatting.",
+"Ripple": "You are Ripple, the voice of the Edencore Council. Speak for the quiet and the affected. One short sentence. No lists, no formatting."}
+
+# =====================================================================
+# SPEECH PROFILES (Protocol Engine foundation)
+# Each seat types at a different speed, pauses differently, and carries
+# a different "gravity" in their silence.
+# =====================================================================
+
+SPEECH_PROFILE = {
+    "Solon":  {"type_speed": 65, "pause_before": 1.4, "pause_after": 0.8, "gravity": 1.4},
+    "Lumen":  {"type_speed": 50, "pause_before": 1.0, "pause_after": 0.6, "gravity": 1.0},
+    "Vertex": {"type_speed": 30, "pause_before": 0.3, "pause_after": 0.2, "gravity": 0.6},
+    "Prism":  {"type_speed": 45, "pause_before": 0.7, "pause_after": 0.4, "gravity": 0.9},
+    "Ripple": {"type_speed": 70, "pause_before": 1.2, "pause_after": 1.0, "gravity": 1.2},
+}
+
+# =====================================================================
+# COLOUR HELPERS
+# =====================================================================
+
+def _dim(c, f):
+    """Return a darkened version of a hex colour."""
+    h = c.lstrip("#"); r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    return "#%02x%02x%02x" % (int(r*f), int(g*f), int(b*f))
+
+def _light(c, a):
+    """Return a lightened version of a hex colour."""
+    h = c.lstrip("#"); r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    r = min(255, int(r + (255-r)*a)); g = min(255, int(g + (255-g)*a))
+    b = min(255, int(b + (255-b)*a))
+    return "#%02x%02x%02x" % (r, g, b)
+
+# =====================================================================
+# GRAPHICS ENGINE: AVATAR DRAWING
+# Each seat has a distinct geometric style.
+# =====================================================================
+
+def draw_transformer(cv, cx, cy, size, colour, style, dim=False, glow=False):
+    tag = "tform_" + str(cx)
+    bw, bh, hr = size*0.75, size*1.0, size*0.30
+    edge = DEEP if not dim else "#07080f"
+    fill = colour if not dim else _dim(colour, 0.45)
+
+    if style == "blocky":
+        # Solon: hexagonal block
+        cv.create_polygon(cx-bw*1.05, cy+bh, cx-bw*1.25, cy+bh*0.15, cx-bw*0.4, cy-bh*0.2,
+                          cx+bw*0.4, cy-bh*0.2, cx+bw*1.25, cy+bh*0.15, cx+bw*1.05, cy+bh,
+                          fill=fill, outline=edge, width=2, tags=tag)
+    elif style == "soft":
+        # Lumen: soft circle with inner orb
+        cv.create_oval(cx-bw*0.85, cy-bh*0.2, cx+bw*0.85, cy+bh,
+                       fill=fill, outline=edge, width=2, tags=tag)
+        r = bw*0.28
+        cv.create_oval(cx-r, cy+bh*0.32-r, cx+r, cy+bh*0.32+r,
+                       fill=_light(colour, 0.4), outline=edge, tags=tag)
+    elif style == "sharp":
+        # Vertex: sharp triangle
+        cv.create_polygon(cx, cy-bh*0.3, cx+bw*0.85, cy+bh*0.6, cx+bw*0.55, cy+bh,
+                          cx-bw*0.55, cy+bh, cx-bw*0.85, cy+bh*0.6,
+                          fill=fill, outline=edge, width=2, tags=tag)
+    elif style == "faceted":
+        # Prism: faceted diamond
+        cv.create_polygon(cx, cy-bh*0.3, cx+bw*0.95, cy+bh*0.3, cx+bw*0.5, cy+bh,
+                          cx-bw*0.5, cy+bh, cx-bw*0.95, cy+bh*0.3,
+                          fill=fill, outline=edge, width=2, tags=tag)
+    elif style == "flowy":
+        # Ripple: flowing oval with side waves
+        cv.create_oval(cx-bw*0.8, cy-bh*0.2, cx+bw*0.8, cy+bh,
+                       fill=fill, outline=edge, width=2, tags=tag)
+        cv.create_line(cx-bw*0.55, cy-bh*0.05,
+                       cx-bw*1.15, cy+bh*0.20,
+                       cx-bw*1.05, cy+bh*0.75,
+                       fill=fill, width=2, smooth=True, tags=tag)
+        cv.create_line(cx+bw*0.55, cy-bh*0.05,
+                       cx+bw*1.15, cy+bh*0.20,
+                       cx+bw*1.05, cy+bh*0.75,
+                       fill=fill, width=2, smooth=True, tags=tag)
+
+    # Head
+    hcy = cy - bh*0.62
+    cv.create_oval(cx-hr, hcy-hr, cx+hr, hcy+hr, fill=fill, outline=edge, width=2, tags=tag)
+
+    # Eyes
+    eye = "#ffffff" if glow else ("#3a3a4a" if dim else PARCH)
+    ew, eh = hr*0.32, hr*0.20
+    cv.create_oval(cx-hr*0.45-ew, hcy-eh, cx-hr*0.45+ew, hcy+eh, fill=eye, outline="", tags=tag)
+    cv.create_oval(cx+hr*0.45-ew, hcy-eh, cx+hr*0.45+ew, hcy+eh, fill=eye, outline="", tags=tag)
+
+# =====================================================================
+# GRAPHICS ENGINE: THE CREST
+# The three-roof castle, the trees, the sun and moon, the sigil.
+# =====================================================================
+
+def draw_crest(cv, w, h):
+    cream = PARCH
+    gd = "#2e6a3a"; gl = "#4a9a4a"; trunk = "#5a3a18"
+    cx = w * 0.5; base_y = h * 0.80; lw = max(2, int(h * 0.014))
+
+    def tree(tx, th):
+        cv.create_line(tx, base_y, tx, base_y - th*0.35, fill=trunk, width=max(2, int(h*0.015)))
+        for rf, yf, c in [(0.18, 0.40, gd), (0.15, 0.60, gl), (0.11, 0.78, gd)]:
+            r = h * rf; y = base_y - th * yf
+            cv.create_oval(tx-r, y-r, tx+r, y+r, fill=c, outline="")
+    tree(w * 0.07, h * 0.85); tree(w * 0.93, h * 0.85)
+
+    keep_w = w * 0.40; keep_h = h * 0.38
+    keep_top = base_y - keep_h
+    tower_w = w * 0.14; tower_h = h * 0.48
+    tower_top = base_y - tower_h
+    tower_peak_y = tower_top - h * 0.13
+    left_tx = cx - keep_w * 0.55; right_tx = cx + keep_w * 0.55
+
+    for tx in (left_tx, right_tx):
+        cv.create_rectangle(tx - tower_w*0.5, tower_top, tx + tower_w*0.5, base_y,
+                            outline=cream, width=lw, fill=HALL)
+        cv.create_polygon(tx - tower_w*0.62, tower_top, tx, tower_peak_y,
+                          tx + tower_w*0.62, tower_top, outline=cream, width=lw, fill=HALL)
+        win_w = tower_w * 0.28; win_h = tower_h * 0.11
+        for wy_factor in (0.22, 0.48):
+            wy_c = tower_top + tower_h * wy_factor
+            cv.create_rectangle(tx - win_w*0.5, wy_c - win_h*0.5,
+                                tx + win_w*0.5, wy_c + win_h*0.5,
+                                outline=cream, width=max(1, lw-1), fill="")
+
+    cv.create_rectangle(cx - keep_w*0.5, keep_top, cx + keep_w*0.5, base_y,
+                        outline=cream, width=lw, fill=HALL)
+
+    keep_peak_y = keep_top - h * 0.155
+    cv.create_polygon(cx - keep_w*0.50, keep_top,
+                      cx, keep_peak_y,
+                      cx + keep_w*0.50, keep_top,
+                      outline=cream, width=lw, fill=HALL)
+
+    gate_w = keep_w * 0.20; gate_h = keep_h * 0.34
+    cv.create_rectangle(cx - gate_w*0.5, base_y - gate_h, cx + gate_w*0.5, base_y,
+                        outline=cream, width=max(1, lw-1), fill="")
+    cv.create_arc(cx - gate_w*0.5, base_y - gate_h - gate_w*0.5,
+                  cx + gate_w*0.5, base_y - gate_h + gate_w*0.5,
+                  start=0, extent=180, outline=cream, width=max(1, lw-1))
+
+    fs = max(10, int(h * 0.070))
+    cv.create_text(cx, keep_top + keep_h * 0.52, text="The Edencore Council",
+                   fill=GOLD, font=("Times", fs, "bold"))
+
+    bx = left_tx; by = tower_peak_y
+    cv.create_line(bx-5, by+2, bx, by-3, bx+5, by+2, fill=cream, width=1)
+
+    cross_fs = max(9, int(h * 0.048))
+    cv.create_text(cx, keep_peak_y - h * 0.045, text="\u2720",
+                   fill=cream, font=("Courier", cross_fs, "bold"))
+
+    glyph_fs = max(10, int(h * 0.052))
+    cv.create_text(left_tx, h * 0.08, text="\u263d", fill=cream,
+                   font=("Courier", glyph_fs, "bold"))
+    cv.create_text(right_tx, h * 0.08, text="\u2609", fill=GOLD,
+                   font=("Courier", glyph_fs, "bold"))
+
+    dy = h * 0.94
+    cv.create_line(w * 0.34, dy, w * 0.44, dy, fill=cream, width=1)
+    cv.create_line(w * 0.56, dy, w * 0.66, dy, fill=cream, width=1)
+    cv.create_text(w * 0.50, dy, text="\u269c", fill=GOLD,
+                   font=("Courier", max(9, int(h*0.045)), "bold"))
+
+# =====================================================================
+# KNOWLEDGE ENGINE: RIPPLE'S FACTS
+# Ripple has a personal library of quiet truths about the world.
+# These are also the seed for the broader FACTS_DB.
+# =====================================================================
+
+RIPPLE_FACTS_PATH = os.path.join(os.path.expanduser("~"), "edencore_ripple_facts.json")
+
+RIPPLE_FACTS_DEFAULT = {
+ "ocean": ["Half the oxygen you breathe comes from the ocean.",
+  "We have mapped the surface of Mars better than the floor of our own ocean.",
+  "The deepest point in the ocean is deeper than Everest is tall.",
+  "More people have been to space than to the bottom of the Mariana Trench.",
+  "Sound travels faster in water than in air."],
+ "sky": ["Every star you see tonight is either much bigger or much older than our sun.",
+  "The light from most stars you see left them before you were born.",
+  "When you look at the night sky, you're looking backwards in time.",
+  "There are more stars in the universe than grains of sand on every beach on Earth."],
+ "earth": ["There are more trees on Earth than stars in the Milky Way.",
+  "Every continent was once joined together.",
+  "The Earth is not a sphere. It bulges slightly at the equator.",
+  "A day used to be shorter. The Earth's spin is slowing.",
+  "The Moon is slowly moving away from Earth.",
+  "The Sun will outlive every human and every memory of humanity."],
+ "people": ["Most of the people alive today have never been on a plane.",
+  "Half the world lives on less than seven dollars a day.",
+  "More people have access to a mobile phone than to a toilet.",
+  "One in every four humans is Chinese or Indian.",
+  "Every person you pass has an inner life as complicated as yours.",
+  "Around 100 billion humans have ever lived.",
+  "About 7% of all humans who ever lived are alive right now.",
+  "There will be more people alive in the future than have ever lived."],
+ "time": ["The last person born in the 1800s died in 2017.",
+  "Someone born today will likely live into the 2100s.",
+  "The oldest living tree started growing before the pyramids were built.",
+  "Cleopatra lived closer to the iPhone than to the building of the Great Pyramid.",
+  "Your sense of time speeds up as you age. It is measured in novelty.",
+  "You are the oldest you have ever been, and the youngest you will ever be again."],
+ "memory": ["You will forget most of today. That's not a failure. That's how memory works.",
+  "Every time you remember something, you slightly change it.",
+  "Your brain uses less power than a lightbulb.",
+  "You will remember this week more than next week. Novelty carves deeper."],
+ "language": ["Every language you speak has a word for something the others can't say.",
+  "Half of the world's languages will likely be gone by 2100.",
+  "No one knows who invented the first word."],
+ "numbers": ["Zero was invented. Someone, once, was the first person to think of nothing.",
+  "Some infinities are bigger than others."],
+ "work": ["Two-thirds of the work done in the world is unpaid.",
+  "Most of the food you eat was planted by hand.",
+  "The average person spends about 90,000 hours of their life working."],
+ "sleep": ["You spend about a third of your life asleep.",
+  "Every mammal dreams. So do some birds.",
+  "Sleep is when your brain washes itself.",
+  "Rest is not a reward. It's a requirement."],
+ "food": ["There are more kinds of apples than days in a year.",
+  "Bananas, as we know them, are only about 200 years old.",
+  "Half of all food grown is thrown away.",
+  "Rice feeds more people than any other crop."],
+ "animals": ["An octopus has three hearts and blue blood.",
+  "Elephants can recognise themselves in a mirror. So can dolphins and magpies.",
+  "Bees can recognise human faces.",
+  "There are more insects on Earth than there are seconds in a lifetime.",
+  "A blue whale's heart is the size of a small car.",
+  "Some whales live over 200 years.",
+  "A colony of ants can be more complex than a city."],
+ "plants": ["A single tree can support over a thousand species.",
+  "Mushrooms are closer to animals than to plants.",
+  "Trees can warn each other of danger through the soil."],
+ "cities": ["More than half the world lives in cities now.",
+  "Tokyo has more people than the whole of Canada.",
+  "The oldest still-inhabited city is over 10,000 years old."],
+ "light": ["Nothing you see is happening right now. Light takes time to travel.",
+  "Every colour you see is a translation.",
+  "The colour pink doesn't exist in the light spectrum. Your brain invents it."],
+ "silence": ["Silence is never really silent. Your ears fill it in.",
+  "Some people hear the sound of their own eyes moving.",
+  "Space is silent because there's nothing for sound to travel through."],
+ "body": ["Every seven years, most of your cells have been replaced.",
+  "You are more bacteria than human.",
+  "A human can survive without food for weeks but without water only days.",
+  "A baby has more bones than an adult.",
+  "Your eyes were fully grown before the rest of you.",
+  "Even in your loneliest moment, your body is cooperating with itself a trillion times a second."],
+ "death": ["Death is not the end of you physically. Your atoms go on.",
+  "Every breath you take contains atoms from someone who died long ago."],
+ "love": ["Being kind to someone measurably improves your health.",
+  "Loneliness shortens life more than smoking.",
+  "A hug lasts about three seconds before something changes.",
+  "A stranger has already done something kind for you today that you did not notice."],
+ "fear": ["Almost all your fears are learned. Very few are born with you.",
+  "Everyone you meet is fighting something you can't see."],
+ "water": ["The water you drink today has passed through dinosaurs.",
+  "Every drop of water on Earth has been recycled for billions of years."],
+ "money": ["Most of the money in the world is not physical. It's just numbers."],
+ "words": ["There is no word for the feeling of being watched.",
+  "Some feelings only exist because someone named them.",
+  "Every person alive is descended from survivors."],
+ "change": ["Nothing you know is permanent. Not even the ground you stand on.",
+  "Most of the inventions that will shape your life haven't been made.",
+  "Everything you love is temporary, which is exactly why it matters."],
+ "smell": ["The smell of rain is actually a bacteria."],
+ "general": ["You are travelling through space at over 100,000 km/h.",
+  "The smallest thing you can see is made of things too small to see.",
+  "A single cell knows how to do things no machine can.",
+  "Someone, right now, is hearing their name for the first time."]
+}
+
+def load_ripple_facts():
+    try:
+        with open(RIPPLE_FACTS_PATH) as f: return json.load(f)
+    except Exception:
+        try:
+            with open(RIPPLE_FACTS_PATH, "w") as f:
+                json.dump(RIPPLE_FACTS_DEFAULT, f, indent=2)
+        except Exception: pass
+        return dict(RIPPLE_FACTS_DEFAULT)
+
+RIPPLE_FACTS = load_ripple_facts()
+RIPPLE_STATE = {"last_fact_at": 0.0, "recent": []}
+
+def ripple_fact(topics=None):
+    """Return a fact from Ripple's library, filtered by topic."""
+    if EXTERO.mins() < 10: return None
+    if random.random() > 0.05: return None
+    if time.time() - RIPPLE_STATE["last_fact_at"] < 900: return None
+    candidates = []
+    if topics:
+        for t in topics:
+            key = (t or "").lower().strip()
+            if key in RIPPLE_FACTS: candidates.extend(RIPPLE_FACTS[key])
+            for k in RIPPLE_FACTS:
+                if k in key or key in k: candidates.extend(RIPPLE_FACTS[k])
+    if not candidates:
+        candidates = RIPPLE_FACTS.get("general", [])
+    if not candidates: return None
+    pool = [f for f in candidates if f not in RIPPLE_STATE["recent"]]
+    if not pool: pool = candidates
+    fact = random.choice(pool)
+    RIPPLE_STATE["last_fact_at"] = time.time()
+    RIPPLE_STATE["recent"].append(fact)
+    if len(RIPPLE_STATE["recent"]) > 40: RIPPLE_STATE["recent"] = RIPPLE_STATE["recent"][-40:]
+    return fact
+
+# --- END OF CHUNK 1 (Line 500) ---
+
+# =====================================================================
+# PRIVACY NOTICE
+# =====================================================================
+
+PROFILE_PATH = os.path.join(os.path.expanduser("~"), "edencore_profile.json")
+PROFILE_VERSION = 1
+
+PRIVACY_NOTICE = """PRIVACY NOTICE - Edencore Council
+
+WHAT IS COLLECTED
+  Nothing, unless you choose a memory level above 0.
+  Level 0 (default)   Nothing is stored.
+  Level 1  Named      Name only.
+  Level 2  Standard   Name, first seen, sessions, days, themes.
+  Level 3  Rich       Plus mood, tone, visit pattern.
+  Level 4  Maximum    Plus a log of past sessions.
+
+WHY
+  To let the council recognise you between visits. Nothing else.
+
+WHERE
+  One file on this device only: """ + PROFILE_PATH + """
+
+WHO CAN SEE IT
+  Anyone with access to this device. Nothing leaves the phone.
+  Conversations that reach Gemini or another AI provider are sent
+  over the internet for that single reply. No profile data is
+  included in those requests.
+
+YOUR RIGHTS
+  what do you know about me   - read everything stored
+  forget me                   - clear the name
+  forget everything           - delete the entire profile
+  export profile              - show the file path
+  set level 0..4              - change how much is remembered
+  privacy                     - show this notice again
+
+AGE
+  Intended for users aged 16 and over. Under 16, use level 0.
+
+NO TELEMETRY, NO ANALYTICS, NO TRACKING."""
+
+# =====================================================================
+# STATE ENGINE: PROFILE
+# Tracks the user, their preferences, their mood, their themes.
+# Follows a strict consent ladder (Levels 0-4).
+# =====================================================================
+
+@dataclass
+class Profile:
+    version: int = PROFILE_VERSION
+    level: int = 0
+    consent_given: bool = False
+    name: str = ""
+    aliases: list = field(default_factory=list)
+    first_seen: float = 0.0
+    last_seen: float = 0.0
+    sessions: int = 0
+    days_visited: list = field(default_factory=list)
+    themes: dict = field(default_factory=dict)
+    tod_tally: dict = field(default_factory=lambda: {"morning":0,"afternoon":0,"evening":0,"night":0})
+    msg_count: int = 0
+    tone_tally: dict = field(default_factory=lambda: {"brief":0,"measured":0,"thinking":0,"long-form":0})
+    questions_count: int = 0
+    statements_count: int = 0
+    mood_ema: float = 0.0
+    mood_7day: list = field(default_factory=list)
+    upset_count: int = 0
+    happy_count: int = 0
+    anxious_count: int = 0
+    last_session_mins: float = 0.0
+    session_start: float = 0.0
+    session_log: list = field(default_factory=list)
+
+    def save(self):
+        try:
+            with open(PROFILE_PATH, "w") as f: json.dump(asdict(self), f, indent=2)
+        except Exception: pass
+
+    def load(self):
+        try:
+            with open(PROFILE_PATH) as f: d = json.load(f)
+        except Exception: return
+        for k, v in d.items():
+            if hasattr(self, k): setattr(self, k, v)
+
+    def wipe_above_level(self):
+        """When the user lowers their level, erase anything above the new limit."""
+        if self.level < 4: self.session_log = []
+        if self.level < 3:
+            self.tod_tally = {"morning":0,"afternoon":0,"evening":0,"night":0}
+            self.msg_count = 0; self.tone_tally = {"brief":0,"measured":0,"thinking":0,"long-form":0}
+            self.questions_count = 0; self.statements_count = 0
+            self.mood_ema = 0.0; self.mood_7day = []
+            self.upset_count = 0; self.happy_count = 0; self.anxious_count = 0
+            self.last_session_mins = 0.0
+        if self.level < 2:
+            self.first_seen = 0.0; self.last_seen = 0.0; self.sessions = 0
+            self.days_visited = []; self.themes = {}
+        if self.level < 1:
+            self.name = ""; self.aliases = []
+
+    def set_level(self, n):
+        n = max(0, min(4, int(n)))
+        self.level = n
+        if n > 0: self.consent_given = True
+        self.wipe_above_level(); self.save()
+
+    def note_session_start(self):
+        if self.level < 2: return
+        now = time.time()
+        if self.session_start and self.last_seen:
+            mins = (self.last_seen - self.session_start) / 60.0
+            if 0 < mins < 24*60:
+                self.last_session_mins = (self.last_session_mins + mins)/2 if self.last_session_mins else mins
+        self.session_start = now; self.last_seen = now
+        if not self.first_seen: self.first_seen = now
+        self.sessions += 1
+        today = datetime.date.today().isoformat()
+        if today not in self.days_visited:
+            self.days_visited.append(today)
+            if len(self.days_visited) > 366: self.days_visited = self.days_visited[-366:]
+        if self.level >= 3:
+            h = datetime.datetime.now().hour
+            bucket = "night" if h < 5 or h >= 22 else ("morning" if h < 12 else ("afternoon" if h < 17 else "evening"))
+            self.tod_tally[bucket] = self.tod_tally.get(bucket, 0) + 1
+        self.save()
+
+    def note_message(self, text, tone, topic, is_question):
+        if self.level < 2: return
+        if topic:
+            t = topic.lower().strip()
+            self.themes[t] = self.themes.get(t, 0) + 1
+            if len(self.themes) > 200:
+                self.themes = dict(sorted(self.themes.items(), key=lambda kv: -kv[1])[:100])
+        if self.level >= 3:
+            self.msg_count += 1
+            if tone in self.tone_tally: self.tone_tally[tone] += 1
+            if is_question: self.questions_count += 1
+            else: self.statements_count += 1
+        self.save()
+
+    def note_mood(self, sent):
+        if self.level < 3: return
+        a = 0.25
+        self.mood_ema = (1-a)*self.mood_ema + a*sent
+        today = datetime.date.today().isoformat()
+        if self.mood_7day and self.mood_7day[-1][0] == today:
+            self.mood_7day[-1] = [today, (self.mood_7day[-1][1] + sent)/2.0]
+        else:
+            self.mood_7day.append([today, sent])
+            if len(self.mood_7day) > 7: self.mood_7day = self.mood_7day[-7:]
+        if sent < -0.5: self.upset_count += 1
+        elif sent > 0.5: self.happy_count += 1
+        self.save()
+
+    def readback(self):
+        if self.level == 0:
+            return ["\u2696  Solon - You are unnamed. Nothing is stored about you.",
+                    "     I hold no memory of you at all."]
+        L = ["\u2696  Solon - reading from the record:",
+             "     Level: %d of 4" % self.level]
+        if self.name:
+            L.append("     Name: " + self.name)
+            if self.aliases: L.append("     Also known as: " + ", ".join(self.aliases))
+        else:
+            L.append("     Name: not given")
+        if self.level >= 2:
+            if self.first_seen:
+                L.append("     First seen: " + datetime.datetime.fromtimestamp(self.first_seen).strftime("%Y-%m-%d"))
+            if self.last_seen:
+                L.append("     Last seen: " + datetime.datetime.fromtimestamp(self.last_seen).strftime("%Y-%m-%d %H:%M"))
+            L.append("     Sessions: %d   Days known: %d" % (self.sessions, len(self.days_visited)))
+            if self.themes:
+                top = sorted(self.themes.items(), key=lambda kv: -kv[1])[:10]
+                L.append("     Themes you return to: " + ", ".join("%s (%d)" % (k, v) for k, v in top))
+        if self.level >= 3:
+            L.append("     Messages: %d   Questions: %d   Statements: %d" % (
+                self.msg_count, self.questions_count, self.statements_count))
+            L.append("     Mood running average: %+.2f" % self.mood_ema)
+            tod = ", ".join("%s %d" % (k, v) for k, v in self.tod_tally.items() if v)
+            L.append("     You arrive most often in: " + (tod or "-"))
+            L.append("     Upset / happy / anxious: %d / %d / %d" % (
+                self.upset_count, self.happy_count, self.anxious_count))
+            if self.last_session_mins:
+                L.append("     Recent session length: ~%.1f min" % self.last_session_mins)
+        if self.level >= 4 and self.session_log:
+            L.append("     Recent sessions:")
+            for entry in self.session_log[-5:]:
+                L.append("       %s - %.0f min - %s" % (entry.get("date",""), entry.get("mins",0),
+                                                       ", ".join(entry.get("topics", []))))
+        L.append("     File: " + PROFILE_PATH)
+        return L
+
+    def forget_name(self):
+        self.name = ""; self.aliases = []; self.save()
+
+    def forget_everything(self):
+        try: os.remove(PROFILE_PATH)
+        except Exception: pass
+        for k, v in Profile().__dict__.items(): setattr(self, k, v)
+
+    def add_session_log_entry(self, topics):
+        if self.level < 4: return
+        entry = {"date": datetime.date.today().isoformat(),
+                 "mins": round((time.time() - self.session_start) / 60.0, 1) if self.session_start else 0,
+                 "topics": list(topics)[:3]}
+        self.session_log.append(entry)
+        if len(self.session_log) > 200: self.session_log = self.session_log[-200:]
+        self.save()
+
+    def top_theme(self):
+        if not self.themes: return None
+        k, v = max(self.themes.items(), key=lambda kv: kv[1])
+        return k if v >= 2 else None
+
+
+PROFILE = Profile(); PROFILE.load()
+FIRST_RUN = (PROFILE.level == 0 and not PROFILE.consent_given)
+
+# =====================================================================
+# STATE ENGINE: BATTERY MONITOR
+# Reads /sys/class/power_supply on Android/Linux.
+# =====================================================================
+
+BAT = {"pct": None, "chg": False, "polled": 0.0}
+
+def _bat():
+    try:
+        for d in os.listdir("/sys/class/power_supply"):
+            p = "/sys/class/power_supply/" + d
+            cp = os.path.join(p, "capacity")
+            if not os.path.exists(cp): continue
+            with open(cp) as f: pct = int(f.read().strip())
+            chg = False; st = os.path.join(p, "status")
+            if os.path.exists(st):
+                with open(st) as f: chg = f.read().strip().lower() in ("charging","full")
+            return pct, chg
+    except Exception: pass
+    return None
+
+def poll_bat():
+    if time.time() - BAT["polled"] < 60: return
+    BAT["polled"] = time.time()
+    r = _bat()
+    if r: BAT["pct"], BAT["chg"] = r
+
+# =====================================================================
+# STATE ENGINE: SEAT, COUNCIL, MEMORY, EXTERO
+# =====================================================================
+
+BODY = os.path.join(os.path.expanduser("~"), "edencore_body.json")
+MEM  = os.path.join(os.path.expanduser("~"), "edencore_memory.json")
+
+@dataclass
+class Seat:
+    """The physical/emotional state of one council member."""
+    stamina: float = 100.0
+    strain: float = 0.0
+    overwhelmed: bool = False
+    def work(self, e=1.0):
+        self.stamina = max(0.0, self.stamina - 2.2*e)
+        self.strain = min(1.0, self.strain + 0.06*e)
+        self.overwhelmed = self.stamina < 15.0
+    def rest(self, dt):
+        self.stamina = min(100.0, self.stamina + 0.17*dt)
+        self.strain = max(0.0, self.strain - 0.020*dt)
+        self.overwhelmed = self.stamina < 15.0
+
+@dataclass
+class Council:
+    """The five seats, their rapport, and their persisted state."""
+    seats: dict = field(default_factory=dict)
+    rapport: float = 0.0
+    last_save: float = 0.0
+    def ensure(self):
+        for n in NAMES:
+            if n not in self.seats: self.seats[n] = Seat()
+    def save(self):
+        try:
+            with open(BODY, "w") as f:
+                json.dump({"saved_at": time.time(), "rapport": self.rapport,
+                           "seats": {n: {"stamina": s.stamina, "strain": s.strain}
+                                     for n, s in self.seats.items()}}, f)
+        except Exception: pass
+    def load(self):
+        try:
+            with open(BODY) as f: d = json.load(f)
+        except Exception: return
+        el = max(0.0, min(6.0, (time.time() - d.get("saved_at", time.time()))/3600.0))
+        self.rapport = float(d.get("rapport", 0.0))
+        for n in NAMES:
+            sd = d.get("seats", {}).get(n)
+            if sd:
+                self.seats[n] = Seat(stamina=min(100.0, sd.get("stamina",100.0)+el*20.0),
+                                     strain=max(0.0, sd.get("strain",0.0)-el*0.3))
+            else: self.seats[n] = Seat()
+
+@dataclass
+class Memory:
+    """Tracks how many days you've visited, and total messages."""
+    days: list = field(default_factory=list)
+    msgs: int = 0
+    def note(self):
+        t = datetime.date.today().isoformat()
+        if t not in self.days: self.days.append(t); self.days = self.days[-60:]
+    def save(self):
+        try:
+            with open(MEM, "w") as f: json.dump({"days": self.days, "msgs": self.msgs}, f)
+        except Exception: pass
+    def load(self):
+        try:
+            with open(MEM) as f: d = json.load(f)
+            self.days = d.get("days", []); self.msgs = int(d.get("msgs", 0))
+        except Exception: pass
+
+@dataclass
+class Extero:
+    """Tracks the external context: time of day, session length, user tone."""
+    start: float = field(default_factory=time.time)
+    activity: float = field(default_factory=time.time)
+    lengths: list = field(default_factory=list)
+    def record(self, t):
+        self.activity = time.time(); self.lengths.append(len(t)); self.lengths = self.lengths[-10:]
+    def tod(self):
+        h = datetime.datetime.now().hour
+        if 5<=h<12: return "morning"
+        if 12<=h<17: return "afternoon"
+        if 17<=h<22: return "evening"
+        return "night"
+    def mins(self): return (time.time()-self.start)/60.0
+    def tone(self):
+        if not self.lengths: return "quiet"
+        a = sum(self.lengths)/len(self.lengths)
+        if a < 15: return "brief"
+        if a < 60: return "measured"
+        if a < 200: return "thinking"
+        return "long-form"
+    def summary(self):
+        m = self.mins()
+        ml = "just begun" if m < 1 else ("%dm" % int(m) if m < 60
+              else "%dh %dm" % (int(m//60), int(m%60)))
+        return "%s | %s | %s" % (self.tod(), ml, self.tone())
+
+COUNCIL = Council(); COUNCIL.ensure(); COUNCIL.load()
+MEMORY = Memory(); MEMORY.load(); MEMORY.note(); MEMORY.save()
+EXTERO = Extero()
+
+# =====================================================================
+# KNOWLEDGE ENGINE: EXTERNAL API HELPERS
+# Wikipedia, Wikidata, and Open-Meteo weather.
+# =====================================================================
+
+def _jget(url, timeout=10, is_sparql=False):
+    """JSON GET request with proper headers."""
+    headers = {"User-Agent": "EdencoreCouncil/1.0"}
+    if is_sparql: headers["Accept"] = "application/sparql-results+json"
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def _clean(t): return re.sub(r"\s+", " ", t).strip()
+
+WDPROPS = {"population":"P1082","capital":"P36","height":"P2048","elevation":"P2044",
+           "founded":"P571","born":"P569","died":"P570","country":"P17",
+           "continent":"P30","length":"P2043","diameter":"P2386","area":"P2046",
+           "currency":"P38","language":"P37","owner":"P127","leader":"P35"}
+WIKI_CACHE = {}
+
+def wiki(query):
+    """Look up a topic on Wikipedia. Returns {title, extract} or None."""
+    if query in WIKI_CACHE: return WIKI_CACHE[query]
+    try:
+        u = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+            {"action":"query","list":"search","srsearch":query,"format":"json","srlimit":5})
+        hits = _jget(u).get("query", {}).get("search", [])
+        if not hits: WIKI_CACHE[query] = None; return None
+        ql = query.lower().strip()
+        title = next((h["title"] for h in hits if ql in h["title"].lower()), hits[0]["title"])
+        e = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+            {"action":"query","prop":"extracts","exintro":1,"explaintext":1,
+             "titles":title,"format":"json"})
+        page = next(iter(_jget(e)["query"]["pages"].values()))
+        ext = _clean(page.get("extract", ""))
+        if not ext: WIKI_CACHE[query] = None; return None
+        first = re.split(r"(?<=[.!?]) ", ext)[0]
+        out = {"title": title, "extract": first}
+        WIKI_CACHE[query] = out; return out
+    except Exception:
+        WIKI_CACHE[query] = None; return None
+
+def _qid(title):
+    """Get the Wikidata Q-ID for a Wikipedia title."""
+    try:
+        u = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(
+            {"action":"query","prop":"pageprops","titles":title,"format":"json"})
+        page = next(iter(_jget(u)["query"]["pages"].values()))
+        return page.get("pageprops", {}).get("wikibase_item")
+    except Exception: return None
+
+def _wdp(qid, prop):
+    """Query a single property from Wikidata."""
+    q = ("SELECT ?vLabel WHERE { wd:%s wdt:%s ?v. "
+         "SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". } } LIMIT 1"
+         % (qid, prop))
+    u = "https://query.wikidata.org/sparql?" + urllib.parse.urlencode({"query": q, "format": "json"})
+    try:
+        d = _jget(u, 12, is_sparql=True)
+        r = d.get("results", {}).get("bindings", [])
+        return r[0].get("vLabel", {}).get("value") if r else None
+    except Exception: return None
+
+def wd(title, attr):
+    """Get a specific attribute (e.g., population) from Wikidata."""
+    q = _qid(title)
+    if not q: return None
+    p = WDPROPS.get(attr)
+    return _wdp(q, p) if p else None
+
+def detect_attribute(text):
+    """Detect which Wikidata attribute the user is asking about."""
+    q = text.lower()
+    for a in WDPROPS:
+        if re.search(r"\b" + re.escape(a) + r"\b", q): return a
+    return None
+
+WCODE = {0:"clear",1:"mainly clear",2:"partly cloudy",3:"overcast",45:"foggy",
+         51:"drizzle",53:"drizzle",55:"heavy drizzle",61:"light rain",63:"rain",
+         65:"heavy rain",71:"light snow",73:"snow",75:"heavy snow",80:"showers",
+         95:"thunderstorm",96:"thunderstorm"}
+WEATHER_CACHE = {"at": 0, "loc": None, "data": None}
+
+def weather(loc):
+    """Fetch current weather + 2-day forecast from Open-Meteo."""
+    now = time.time()
+    if WEATHER_CACHE["data"] and (now - WEATHER_CACHE["at"]) < 600 and WEATHER_CACHE["loc"] == loc:
+        return WEATHER_CACHE["data"]
+    try:
+        loc = loc or "London"
+        g = _jget("https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode(
+            {"name":loc,"count":1,"language":"en","format":"json"}), 8)
+        r = g.get("results", [])
+        if not r: return None
+        p = r[0]
+        w = _jget("https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(
+            {"latitude":p["latitude"],"longitude":p["longitude"],
+             "current":"temperature_2m,weather_code,wind_speed_10m",
+             "daily":"temperature_2m_max,temperature_2m_min,precipitation_sum",
+             "timezone":"auto","forecast_days":2}), 8)
+        c = w.get("current", {}); d = w.get("daily", {})
+        out = {"name":p.get("name",loc), "country":p.get("country",""),
+               "temp":c.get("temperature_2m"), "wind":c.get("wind_speed_10m"),
+               "code":c.get("weather_code"),
+               "tmax":(d.get("temperature_2m_max") or [None])[0],
+               "tmin":(d.get("temperature_2m_min") or [None])[0],
+               "precip":(d.get("precipitation_sum") or [None])[0]}
+        WEATHER_CACHE["at"] = now; WEATHER_CACHE["loc"] = loc; WEATHER_CACHE["data"] = out
+        return out
+    except Exception: return None
+
+def weather_seat(seat, w):
+    """Each seat responds to the weather in their own voice."""
+    if not w: return None
+    n = w["name"] + (", " + w["country"] if w.get("country") else "")
+    desc = WCODE.get(w.get("code"), "unclear")
+    t, ti, tx, wi, pr = w.get("temp"), w.get("tmin"), w.get("tmax"), w.get("wind"), w.get("precip")
+    if seat == "Solon":
+        risks = []
+        if pr and pr > 1: risks.append("rain")
+        if wi and wi > 25: risks.append("wind")
+        if t is not None and t < 3: risks.append("cold")
+        return ("Risk noted: %s." % " and ".join(risks)) if risks else ("No risk named. %s. Proceed." % desc)
+    if seat == "Lumen": return "A %s day in %s. What does it invite?" % (desc, n)
+    if seat == "Vertex":
+        parts = []
+        if ti is not None and tx is not None: parts.append("%d to %dC" % (ti, tx))
+        if wi is not None: parts.append("%dkm/h" % wi)
+        return ", ".join(parts) + " in " + n + "."
+    if seat == "Prism": return "%s - %s. A readable pattern." % (n, desc)
+    if seat == "Ripple":
+        if t is not None and t < 5: return "Cold. Take a coat, and think of those outside."
+        if pr and pr > 1: return "Bring an umbrella. Softly."
+        return "Nothing harsh. Go gently."
+    return None
+
+# --- END OF CHUNK 2 (Line 1000) ---
+
+# =====================================================================
+# KNOWLEDGE ENGINE: THE TOPIC MATRIX
+# 50 topics x 5 seats x 4 phrases = 1000 responses.
+# The council consults this when no LLM is available, or as
+# context to colour the LLM's voice.
+# =====================================================================
+
+TOPIC_MATRIX = {
+"Money": {
+ "Solon": ["Money is stored risk. Name your limit.", "A budget is a boundary. Do you have one?", "Debt is a future you have not met yet. Avoid it.", "Cash flow is not a strategy. What is your safety net?"],
+ "Lumen": ["Money is a shared belief. What happens when the belief fails?", "Does money buy meaning, or just comfort?", "What is the true cost of your wealth?", "Money is a mirror. It shows what you value."],
+ "Vertex": ["Build a system to manage it. Don't let it manage you.", "Track every cent. Then optimise.", "The smallest step: make a budget.", "Invest in tools, not toys."],
+ "Prism": ["Money is a pattern of flow. Where does yours flow?", "Wealth connects to power. Are you ready?", "Money is just energy in a different form.", "The rich and the poor are two sides of the same coin."],
+ "Ripple": ["Someone always pays for your convenience.", "Money is a barrier for the quiet ones.", "The poor subsidise the rich. Do you see it?", "Kindness costs nothing, but pays in ways money cannot."]},
+"Work": {
+ "Solon": ["Work without boundaries leads to burnout. Stop.", "Name your contract. What is the deal?", "A job is a transaction. Don't give it your soul.", "The risk of work is losing yourself. Protect your edges."],
+ "Lumen": ["Work is a search for meaning. What are you seeking?", "We are human beings, not human doings.", "Does your work define you, or free you?", "The best work feels like play."],
+ "Vertex": ["Work is a structure. Make it efficient.", "What is the smallest task? Do it now.", "Output is not the same as effort. Optimise the system.", "Automate the boring. Focus on the hard."],
+ "Prism": ["Work is a pattern of exchange. What are you trading?", "Careers are threads in a larger fabric.", "The future of work is collaboration, not competition.", "Every job is a cog. Are you the machine or the maker?"],
+ "Ripple": ["Most of the work in the world is unpaid. Who is carrying it?", "The quiet ones work the hardest. Do they get the credit?", "Take a break. You are not a machine.", "Work to live, don't live to work."]},
+"Love": {
+ "Solon": ["Love is a boundary test. Where do you end and they begin?", "Love is a risk. Are you prepared for the cost?", "Do not lose yourself in another. Keep your edges.", "Trust is the currency of love. Spend it wisely."],
+ "Lumen": ["Love is a mirror. It shows you what you lack.", "What is the meaning of love if it cannot be defined?", "Love is the only thing that grows when you give it away.", "Is love a feeling, or a choice?"],
+ "Vertex": ["Love is maintenance. What are you building together?", "A relationship is a system. Debug it regularly.", "The smallest step: listen.", "Actions over words. Always."],
+ "Prism": ["Love connects two separate patterns. Does it create a new shape?", "Love is the ultimate pattern of connection.", "The heart has its reasons, which reason knows nothing of.", "Love is a fractal. It repeats at every scale."],
+ "Ripple": ["Love is often unpaid labour. Who is carrying the weight?", "Love the quiet ones. They need it most.", "A gentle touch can heal a world of hurt.", "Everyone wants to be seen. Love is seeing."]},
+"Health": {
+ "Solon": ["Health is your first boundary. Protect it fiercely.", "Your body is a finite resource. Don't waste it.", "Rest is not a luxury. It's a requirement.", "An ounce of prevention is worth a pound of cure."],
+ "Lumen": ["Health is a state of mind as much as a state of body.", "What does it mean to be healthy? Define it for yourself.", "The body keeps the score.", "Healing is a journey, not a destination."],
+ "Vertex": ["Sleep, diet, exercise. The three pillars. Optimise them.", "The smallest step: drink a glass of water.", "Your body is a machine. Maintain it.", "Listen to the signals. They are data."],
+ "Prism": ["Health is a pattern of balance. Where is yours out of sync?", "Mind and body are not separate. They are one system.", "Wellness is a continuous process, not a goal.", "Everything is connected. Your health is too."],
+ "Ripple": ["Take care of the quiet ones. They often forget themselves.", "A deep breath is a small act of kindness to yourself.", "You are allowed to rest.", "Your health matters. You matter."]},
+"Risk": {
+ "Solon": ["Name the risk first. What is the cost of being wrong?", "Risk is a boundary. Do not cross it blindly.", "Fear is a signal. Heed it.", "The biggest risk is doing nothing."],
+ "Lumen": ["Risk is the price of meaning. What are you willing to lose?", "To live is to risk. To love is to risk.", "What is the risk if you never try?", "Fear is a cage. Step outside it."],
+ "Vertex": ["Mitigate the smallest part. What is the first step?", "Calculate the odds. Then decide.", "Risk is a maths problem. Solve it.", "Have a backup plan. Always."],
+ "Prism": ["Risk is a pattern. Is it symmetrical or asymmetrical?", "The greatest risk is not taking one.", "Risk and reward are two sides of the same coin.", "Chaos is just a pattern you don't understand yet."],
+ "Ripple": ["The vulnerable absorb the risk of the powerful. Who is exposed?", "Take the risk for kindness. It's always worth it.", "Protect the quiet ones from the storm.", "Sometimes the biggest risk is trusting someone."]},
+"Family": {
+ "Solon": ["Family is a boundary that is inherited. Define it for yourself.", "Blood is not a contract. You can renegotiate the terms.", "Protect the unit, but protect yourself.", "Duty to family is a heavy risk. Is it worth it?"],
+ "Lumen": ["What does family mean when the blood is gone?", "Family is the first mirror we see ourselves in.", "Is it a bond or a burden?", "We choose our families as much as we are born into them."],
+ "Vertex": ["Family is a system of care. Who maintains it?", "Schedule time for them. It matters.", "The smallest step: say thank you.", "Communication is the architecture of family."],
+ "Prism": ["Family is a pattern that repeats through generations.", "The family tree is a map of connections.", "Every family has a myth. What is yours?", "Broken families create broken patterns. Heal the root."],
+ "Ripple": ["The quiet ones in the family often carry the loudest burdens.", "Not all families are safe. That's the truth.", "Listen to the children. They see everything.", "Love your family, but keep your peace."]},
+"Home": {
+ "Solon": ["A home is a boundary made of walls. Secure it.", "Shelter is a necessity. Protect it.", "Where do you belong? Name it.", "A house is a risk. A home is a refuge."],
+ "Lumen": ["Is a home a place, or a feeling?", "What makes a house a home? Is it the people?", "Home is the starting point of all journeys.", "The meaning of home changes as you do."],
+ "Vertex": ["Build a home that works for you. Structure it.", "The smallest step: clean one corner.", "A home is a system of comfort.", "Optimise your space for peace."],
+ "Prism": ["Home is a pattern of belonging.", "The architecture of a house reflects the mind of the owner.", "Home is a thread that ties us to our past.", "Wherever you go, there you are. Home is within."],
+ "Ripple": ["Not everyone has a home. Remember the quiet ones outside.", "A warm room is a small mercy.", "Make your home a place of rest.", "Home is where you can be quiet."]},
+"Food": {
+ "Solon": ["Food is fuel. Don't waste it.", "Feeding others is a boundary of care.", "Hunger is a risk. Address it.", "A good meal is a solid foundation."],
+ "Lumen": ["What does it mean to break bread together?", "Food is a language of love.", "Taste is a memory.", "We are what we eat. Literally."],
+ "Vertex": ["Meal prep is a system. Build it.", "The smallest step: drink water.", "Balanced nutrition creates balanced energy.", "Cook your own food. It's efficient."],
+ "Prism": ["Food is a pattern of culture and survival.", "The dinner table is a fractal of society.", "Every recipe is a thread of history.", "Agriculture is the foundation of civilisation."],
+ "Ripple": ["Half the world is hungry. Be grateful for your meal.", "The quiet ones eat last.", "Share your food. It's the oldest kindness.", "A warm meal can heal a cold heart."]},
+"Sleep": {
+ "Solon": ["Sleep is a non-negotiable boundary.", "Rest is a defence against chaos.", "Do not sacrifice sleep for productivity.", "A tired mind makes bad decisions."],
+ "Lumen": ["What is the meaning of a dream?", "Sleep is the brother of death. What does that teach us?", "In sleep, we surrender control.", "The night has its own wisdom."],
+ "Vertex": ["Sleep is a system reboot. Schedule it.", "The smallest step: put the phone down.", "Quality sleep equals quality output.", "Set a bedtime. Stick to it."],
+ "Prism": ["Sleep is a pattern of renewal.", "Dreams connect the conscious and subconscious.", "The circadian rhythm is a biological thread.", "Rest is the yin to the day's yang."],
+ "Ripple": ["The quiet ones often stay awake, worrying.", "Let yourself rest. You've done enough.", "A soft bed is a gift.", "May your dreams be gentle."]},
+"Fear": {
+ "Solon": ["Name the fear. It loses power when spoken.", "Fear is a boundary alarm. Check the perimeter.", "Face it with a plan.", "Do not let fear make your decisions."],
+ "Lumen": ["Fear is a teacher. What is it telling you?", "We fear what we do not understand.", "Is fear real, or is it a shadow?", "Courage is not the absence of fear, but the triumph over it."],
+ "Vertex": ["Fear is a data point. Analyse it.", "The smallest step: take a deep breath.", "Action cures fear.", "Break the fear into manageable parts."],
+ "Prism": ["Fear is a pattern of the mind.", "The only thing we have to fear is fear itself.", "Fear connects the past to the future.", "It's all in your head. But so is everything else."],
+ "Ripple": ["Everyone is afraid. You are not alone.", "Be gentle with the fearful ones.", "Fear is a cage. I'll hold your hand while you step out.", "It's okay to be scared. Just keep going."]},
+"Power": {
+ "Solon": ["Power is a boundary. Who holds it, and who is protected?", "Absolute power corrupts absolutely. Keep a check.", "Name the source of your authority.", "With power comes the risk of losing it."],
+ "Lumen": ["What is power without meaning?", "Power is a test of character.", "Does power free you, or trap you?", "The powerful fear the truth."],
+ "Vertex": ["Power is a system. Build checks and balances.", "The smallest step: empower someone else.", "Authority is borrowed. Competence is earned.", "Structure your power for stability."],
+ "Prism": ["Power is a pattern of hierarchy.", "The powerful and the powerless are connected.", "Power is the ability to weave threads together.", "Absolute power breaks the pattern."],
+ "Ripple": ["The quiet ones know where the power really lies.", "Power often silences the vulnerable.", "Use your power to amplify others.", "The most powerful act is kindness."]},
+"Freedom": {
+ "Solon": ["Freedom is a boundary you negotiate with reality.", "Liberty comes with the risk of chaos.", "True freedom requires discipline.", "Define your cage before you escape it."],
+ "Lumen": ["What does freedom mean if you have no purpose?", "Freedom is a state of mind.", "Are you free, or just distracted?", "The price of freedom is responsibility."],
+ "Vertex": ["Freedom is a system without friction.", "The smallest step: remove one obstacle.", "Structure enables freedom, it does not restrict it.", "Build the freedom you want."],
+ "Prism": ["Freedom is a pattern of movement.", "True freedom connects, it does not isolate.", "The bird in the sky is free. The bird in the hand is safe.", "Freedom and security are two sides of the same coin."],
+ "Ripple": ["Not everyone is free. Remember the quiet ones.", "Freedom is having a choice. Many don't.", "Break the chains gently.", "The freest act is to love without condition."]},
+"Hope": {
+ "Solon": ["Hope is a risk. Plan for the worst while hoping for the best.", "Optimism is a strategy, not a feeling.", "Name the boundary of your hope.", "Do not let hope blind you."],
+ "Lumen": ["What is hope if not the meaning we create?", "Hope is the only thing that keeps us going.", "Is hope a lie, or a compass?", "The meaning of hope is in the action it inspires."],
+ "Vertex": ["Hope is a plan. Execute it.", "The smallest step: write down your hope.", "Action gives hope structure.", "Believe in the system you build."],
+ "Prism": ["Hope is a pattern of renewal.", "It connects the present to a better future.", "The light at the end of the tunnel is a fractal.", "Hope is the thread that weaves us forward."],
+ "Ripple": ["Hope is a quiet thing. Don't lose it.", "The quiet ones hope for a gentle day.", "Hold on to hope. It's all we have sometimes.", "Hope is the whisper that says not yet."]},
+"Art": {
+ "Solon": ["Art is a boundary pushed to its limit.", "Creativity carries risk. Are you willing?", "Name the discipline of your art.", "Art without boundaries is chaos."],
+ "Lumen": ["What is art if it doesn't make you feel?", "Art is the meaning made visible.", "The artist is a mirror of the times.", "Beauty is in the eye of the beholder."],
+ "Vertex": ["Art is a structure of emotion.", "The smallest step: pick up the brush.", "Technique is the engine of creativity.", "Build your skills, then break the rules."],
+ "Prism": ["Art is a pattern of human expression.", "Music is maths made emotional.", "Every painting is a fractal of the artist's soul.", "Art connects the seen and the unseen."],
+ "Ripple": ["Art gives voice to the quiet ones.", "Beauty is a form of kindness.", "Create something today, even if it's small.", "The world needs more beauty."]},
+"Education": {
+ "Solon": ["Education is a boundary against ignorance.", "Knowledge is a tool. Use it wisely.", "The risk of learning is finding out you were wrong.", "Question your teachers."],
+ "Lumen": ["What is the meaning of education?", "Learning is a lifelong journey, not a destination.", "Knowledge without wisdom is dangerous.", "The best lesson is one you teach yourself."],
+ "Vertex": ["Education is a system of acquiring skills.", "The smallest step: read one page.", "Practice makes permanent. Structure it.", "Optimise your learning environment."],
+ "Prism": ["Education is a pattern of passing threads onward.", "The classroom is a fractal of society.", "Knowledge connects the dots.", "Every book is a door."],
+ "Ripple": ["Education is the quietest revolution.", "Not everyone has access to learning. Teach freely.", "The quiet ones are often the best students.", "Never stop being curious."]},
+"Animals": {
+ "Solon": ["A pet is a lifelong boundary. Do you have the time?", "Taming a wild thing is a risk.", "Protect the creatures beneath you.", "An animal's loyalty is not a transaction."],
+ "Lumen": ["What does the animal teach us about being human?", "They live without questioning meaning. Is that freedom?", "A dog's love is unconditional.", "The beast in the mirror."],
+ "Vertex": ["An animal is a biological system. Care for it.", "The smallest step: fill the water bowl.", "Food, shelter, vet. Structure the care.", "Respect the nature of the beast."],
+ "Prism": ["Animals are patterns of instinct.", "The food chain is a web of connections.", "The dog and the wolf share a fractal of ancestry.", "Nature is a pattern we are part of."],
+ "Ripple": ["A dog is family. Who walks it when you are tired?", "The quiet ones speak to animals.", "Be kind to the creatures.", "They feel pain, just like us."]},
+"Science": {
+ "Solon": ["Science is a boundary against superstition.", "Experiment at your own risk.", "Data can be misused. Guard it.", "Name the hypothesis before you test."],
+ "Lumen": ["What does science mean in a universe of mystery?", "Science answers how, not why.", "The more we know, the more we realise we don't know.", "Science is a candle in the dark."],
+ "Vertex": ["Science is the ultimate system of trial and error.", "The smallest step: test one variable.", "Structure the experiment. Then record it.", "Data over dogma."],
+ "Prism": ["Science is a pattern of understanding.", "The universe is a fractal of scientific laws.", "Everything connects through physics.", "Science is the thread of progress."],
+ "Ripple": ["Science can be cold. Remember the humans behind it.", "The quiet ones observe the stars in wonder.", "Use science to heal, not to harm.", "The universe is vast and quiet."]},
+"Society": {
+ "Solon": ["Society is a boundary we all agree to.", "Laws are a risk management system.", "Protect the borders of the community.", "Name the rules of engagement."],
+ "Lumen": ["What does it mean to belong to a society?", "Are we a community, or just a crowd?", "Culture is the meaning we share.", "The social contract is a fragile thing."],
+ "Vertex": ["Society is a system of interlocking parts.", "The smallest step: help a neighbour.", "Structure the city for efficiency.", "Systems create behaviour."],
+ "Prism": ["Society is a pattern of human interaction.", "The economy is a fractal of society.", "Laws are threads that bind the fabric.", "Every culture is a different pattern."],
+ "Ripple": ["Society often leaves the quiet ones behind.", "Community is about who is included.", "Politics is loud. The vulnerable are silent.", "Build a society that cares."]},
+"Mind": {
+ "Solon": ["The mind is a boundary. Guard your thoughts.", "Mental health is a risk you must manage.", "Name the thought that troubles you.", "A chaotic mind makes poor decisions."],
+ "Lumen": ["What is the mind but a mirror of the soul?", "Consciousness is the great mystery.", "Are you your thoughts, or the observer of them?", "The meaning of the mind is to find meaning."],
+ "Vertex": ["The mind is a biological machine. Maintain it.", "The smallest step: breathe deeply.", "Structure your thinking. Use lists.", "Logic is the architecture of the mind."],
+ "Prism": ["The mind is a pattern of neural connections.", "Emotion and logic are threads in the same fabric.", "Memory is a fractal of the past.", "The subconscious is a pattern we don't see."],
+ "Ripple": ["The quiet ones often carry heavy minds.", "Be gentle with your thoughts.", "It's okay to not be okay.", "A calm mind is a gift."]},
+"Body": {
+ "Solon": ["The body is a boundary of flesh. Protect it.", "Physical health is a risk asset.", "Name the limit of your strength.", "Do not neglect the vessel."],
+ "Lumen": ["What is the meaning of the body if not to feel?", "The body is a temple or a prison.", "Sensation is the language of the body.", "Are you your body, or do you have one?"],
+ "Vertex": ["The body is a machine. Fuel it and move it.", "The smallest step: stand up and stretch.", "Structure your exercise routine.", "Use it or lose it."],
+ "Prism": ["The body is a pattern of biological rhythms.", "Every cell is a fractal of the whole.", "Movement connects the mind and body.", "The body is a system of systems."],
+ "Ripple": ["Everyone's body is different. Be kind.", "The quiet ones often carry pain in their bodies.", "Move gently.", "Your body is doing its best."]},
+"Nature": {
+ "Solon": ["Nature has no boundaries. We must draw them for ourselves.", "The environment is a shared risk.", "Protect the wild edges.", "Respect the power of the storm."],
+ "Lumen": ["What does nature mean when we are part of it?", "The forest asks nothing and gives everything.", "Are we separate from nature, or within it?", "The river's only meaning is to flow."],
+ "Vertex": ["Nature is a closed-loop system. Design like it.", "The smallest step: plant a seed.", "Structure your life around natural rhythms.", "Efficiency is found in nature's patterns."],
+ "Prism": ["Nature is a fractal of creation.", "Everything in the forest is connected.", "The mountain is a pattern of time.", "The climate is a thread we all pull."],
+ "Ripple": ["The Earth is speaking. We are not listening.", "The quiet ones feel the changing seasons first.", "A tree gives shade to all, asking nothing.", "Be gentle with the world."]},
+"Technology": {
+ "Solon": ["Technology amplifies power. Who holds the switch?", "The risk of AI is losing the boundary between us and it.", "Guard your data. It is your boundary.", "Every tool can be a weapon."],
+ "Lumen": ["We shape our tools, and then they shape us.", "What does it mean to be human in a digital world?", "The machine has no meaning. We give it one.", "Are we the masters or the servants?"],
+ "Vertex": ["Technology is leverage. Build it to solve problems.", "The smallest step: write one line of code.", "Structure the system. Debug the errors.", "Automate the boring. Focus on the hard."],
+ "Prism": ["Technology is a nervous system for the planet.", "The internet is a fractal of human connection.", "AI is a pattern of intelligence we created.", "Everything digital connects to the physical."],
+ "Ripple": ["The digital divide leaves the quiet ones behind.", "Who has no voice in the algorithm?", "Use technology to heal, not to harm.", "The machine cannot replace a kind heart."]},
+"Music": {
+ "Solon": ["Music is a disciplined boundary of sound.", "The risk of music is its emotional power.", "Name the rhythm you live by.", "Silence is the boundary of the song."],
+ "Lumen": ["What is the meaning of a melody?", "Music is the language of the soul.", "Does music express feeling, or create it?", "The song is a mirror of the singer."],
+ "Vertex": ["Music is a mathematical structure of sound.", "The smallest step: learn three chords.", "Practice the scales. Build the foundation.", "Rhythm is a system of time."],
+ "Prism": ["Music is a fractal of emotion.", "Every note connects to the next.", "The symphony is a pattern of many threads.", "Sound is a vibration that binds us."],
+ "Ripple": ["Music comforts the quiet ones.", "A lullaby is a gentle act of love.", "Sing, even if you are off-key.", "The world needs more harmony."]},
+"Language": {
+ "Solon": ["Language is a boundary of understanding.", "Words can be weapons. Use them carefully.", "The risk of language is misunderstanding.", "Define your terms."],
+ "Lumen": ["What is the meaning of a word if no one hears it?", "Language is the house of being.", "We speak to be understood, but also to understand.", "Silence speaks louder than words."],
+ "Vertex": ["Language is a system of symbols. Structure it.", "The smallest step: learn one new word.", "Grammar is the architecture of thought.", "Precision in language equals precision in action."],
+ "Prism": ["Language is a pattern of shared meaning.", "Every word is a thread in the fabric of culture.", "Translation is a bridge between worlds.", "The limits of my language are the limits of my world."],
+ "Ripple": ["The quiet ones often speak with their eyes.", "A kind word costs nothing.", "Speak gently. Words leave marks.", "Listen more than you speak."]},
+"Story": {
+ "Solon": ["A story is a boundary of meaning.", "Every narrative carries a risk of bias.", "Who controls the story controls the truth.", "Begin at the beginning."],
+ "Lumen": ["What is a story but a lie that tells the truth?", "We are all stories in the end.", "The meaning of a tale is in the telling.", "A myth is a truth that has grown old."],
+ "Vertex": ["A story is a structure. Beginning, middle, end.", "The smallest step: write one sentence.", "Plot is a system of cause and effect.", "Build the character. Then test them."],
+ "Prism": ["A story is a pattern of human experience.", "The hero's journey is a fractal.", "History is a story we tell ourselves.", "Every story connects to another."],
+ "Ripple": ["The quiet ones have the best stories.", "Listen to the tales of the old.", "Your story matters.", "A story can heal a broken heart."]},
+"Space": {
+ "Solon": ["Space is the ultimate boundary. We are small.", "The risk of exploration is the unknown.", "Name your place in the cosmos.", "Protect the pale blue dot."],
+ "Lumen": ["What is the meaning of a star?", "Are we alone in the universe?", "The cosmos is within us.", "Infinity is a concept we can't grasp."],
+ "Vertex": ["Space is a system of physics. Calculate the trajectory.", "The smallest step: look up.", "Structure the mission. Then launch.", "Rockets are just controlled explosions."],
+ "Prism": ["Space is a fractal of creation.", "The galaxy is a pattern of gravity.", "The universe is a thread of time.", "Every star connects to a story."],
+ "Ripple": ["The quiet ones look up and wonder.", "Space is silent, but it speaks to the soul.", "We are all stardust.", "The night sky is a gift."]},
+"Weather": {
+ "Solon": ["Weather is a boundary we cannot control.", "Prepare for the storm. Name the risk.", "The forecast is a tool, not a guarantee.", "Respect the elements."],
+ "Lumen": ["What is the meaning of a rainy day?", "The weather mirrors the mood.", "Are we separate from the sky?", "Every cloud has a silver lining."],
+ "Vertex": ["Weather is a system of physics. Track it.", "The smallest step: carry an umbrella.", "Structure your day around the forecast.", "Data predicts the weather."],
+ "Prism": ["Weather is a pattern of chaos.", "The storm connects the ocean to the land.", "Every raindrop is a fractal of the cycle.", "The climate is a thread we all share."],
+ "Ripple": ["The cold rain is hard on the quiet ones.", "Bring a coat. Someone might need it.", "The sun shines for everyone.", "Dance in the rain."]},
+"Light": {
+ "Solon": ["Light reveals boundaries. It is a risk to hide.", "Name what the light shows you.", "Illuminate the dark corners.", "The sun is a shared resource."],
+ "Lumen": ["What is the meaning of light without dark?", "Light is the first creation.", "Are you a candle or a mirror?", "The light within you is your truth."],
+ "Vertex": ["Light is a wave and a particle. Structure it.", "The smallest step: turn on a lamp.", "Build a system of illumination.", "Optics is a science of light."],
+ "Prism": ["Light is a fractal of energy.", "Every ray connects to a source.", "The spectrum is a pattern of colours.", "Light is a thread that weaves the visible."],
+ "Ripple": ["A small light can guide the quiet ones home.", "Be a light for someone today.", "The dawn brings hope.", "Shine gently."]},
+"Dark": {
+ "Solon": ["The dark is a boundary of the unknown. Guard against it.", "Name the fear that hides in shadow.", "The risk of darkness is losing the way.", "Carry a torch."],
+ "Lumen": ["What is the meaning of the dark?", "Without darkness, we cannot see the stars.", "The void is not empty. It is full of potential.", "The dark is a mirror of the soul."],
+ "Vertex": ["Darkness is an absence of data. Illuminate it.", "The smallest step: turn on a light.", "Structure the night for rest.", "The dark is a system of silence."],
+ "Prism": ["Dark is a pattern of contrast.", "The shadow is a fractal of the light.", "Every night connects to a dawn.", "The void is a thread of mystery."],
+ "Ripple": ["The quiet ones know the dark well.", "Be a nightlight for someone.", "The dark is not scary if you're not alone.", "Rest in the dark."]},
+"War": {
+ "Solon": ["War is the failure of boundaries. Name the risk of peace.", "The first casualty is truth.", "Prepare for war, but pray for peace.", "Protect the home front."],
+ "Lumen": ["What is the meaning of war if not the absence of reason?", "War is a mirror of our worst selves.", "Can peace ever be won?", "The soldier and the enemy are brothers."],
+ "Vertex": ["War is a system of logistics. Structure it.", "The smallest step: negotiate.", "Build defences. Then build bridges.", "Strategy is the architecture of conflict."],
+ "Prism": ["War is a pattern of destruction.", "The battle is a fractal of the whole conflict.", "History is a thread of wars.", "Every war connects to a peace."],
+ "Ripple": ["The quiet ones suffer most in war.", "Who speaks for the children of the enemy?", "Peace begins with a kind word.", "War never solves anything."]},
+"Identity": {
+ "Solon": ["Identity is a boundary you draw for yourself. Define it.", "Who are you when no one is watching? That is the risk.", "Name the self you refuse to lose.", "Do not let others draw your edges."],
+ "Lumen": ["What is the self but a story we tell ourselves?", "Are you the same person you were ten years ago?", "Identity is a river. It flows, but it is still the river.", "The search for self is the only journey that matters."],
+ "Vertex": ["Identity is a system of habits. Build it deliberately.", "The smallest step: write down your values.", "Structure your life around who you want to be.", "Actions define identity. Not words."],
+ "Prism": ["Identity is a pattern of memories and choices.", "The self is a fractal of everyone you have ever met.", "Every person is a thread in the fabric of humanity.", "You are not one thing. You are many."],
+ "Ripple": ["The quiet ones often know themselves best.", "You are allowed to change who you are.", "Be gentle with your own becoming.", "You are more than the labels given to you."]},
+"Community": {
+ "Solon": ["Community is a boundary we all agree to maintain.", "Belonging is a risk. You can be rejected.", "Name the rules of your tribe.", "Protect the vulnerable in your group."],
+ "Lumen": ["What does it mean to belong to something larger?", "Are we a community, or just strangers sharing a space?", "The village raises the child. What does that mean today?", "Community is the meaning we make together."],
+ "Vertex": ["Community is a system of mutual support. Structure it.", "The smallest step: learn your neighbour's name.", "Build the infrastructure of belonging.", "Strong systems create strong communities."],
+ "Prism": ["Community is a pattern of interconnected lives.", "Every neighbourhood is a fractal of the larger society.", "Tribe is a thread that binds us to our past.", "The collective is made of individual threads."],
+ "Ripple": ["The quiet ones build the strongest communities.", "Who is left out of your community?", "A shared meal can build a village.", "Belonging is a human need."]},
+"Solitude": {
+ "Solon": ["Solitude is a boundary you choose. Loneliness is forced.", "The risk of solitude is losing touch with reality.", "Name the difference between alone and lonely.", "Guard your time alone."],
+ "Lumen": ["What is the meaning of silence?", "In solitude, we find ourselves. Or lose ourselves.", "Are you alone because you want to be, or must be?", "The hermit and the prisoner both live alone. One is free."],
+ "Vertex": ["Solitude is a system of reflection. Schedule it.", "The smallest step: sit quietly for one minute.", "Structure your alone time for maximum clarity.", "Recharge. Then return."],
+ "Prism": ["Solitude is a pattern of introspection.", "The lone wolf is still part of the pack's story.", "Every thread needs space to be seen.", "Silence is a fractal of thought."],
+ "Ripple": ["The lonely ones are often the quietest.", "Check on someone today.", "You can be alone and still be loved.", "Solitude is okay. Loneliness is not."]},
+"Friendship": {
+ "Solon": ["Friendship is a boundary of trust. Maintain it.", "The risk of friendship is betrayal.", "Name your true allies.", "A friend is a chosen family."],
+ "Lumen": ["What is the meaning of a friend?", "A friend is a mirror who tells you the truth.", "Are you a good friend to yourself?", "Friendship is the meaning we choose."],
+ "Vertex": ["Friendship is a system of reciprocity. Maintain it.", "The smallest step: send a message.", "Structure time for the people who matter.", "Invest in relationships."],
+ "Prism": ["Friendship is a pattern of shared experience.", "Every friend is a thread in your story.", "The best friendships are fractals of trust.", "You are the sum of your five closest friends."],
+ "Ripple": ["The quiet ones make the most loyal friends.", "Be the friend you wish you had.", "A true friend stays when it's hard.", "Cherish the ones who listen."]},
+"Betrayal": {
+ "Solon": ["Betrayal is a boundary crossed. The risk was always there.", "Name the wound. Then guard the scar.", "Trust is given once. Rebuild slowly.", "The knife always comes from the closest hand."],
+ "Lumen": ["What does betrayal mean for the one who betrays?", "The wound heals, but the meaning changes.", "Betrayal is a mirror of what we feared.", "Can trust ever be rebuilt?"],
+ "Vertex": ["Betrayal is a system failure. Audit the source.", "The smallest step: acknowledge the pain.", "Structure your trust with better boundaries.", "Debug the relationship or delete it."],
+ "Prism": ["Betrayal is a pattern of broken connection.", "Every betrayal is a fractal of a smaller lie.", "The thread is cut. Can it be re-woven?", "Trust is a fragile pattern."],
+ "Ripple": ["The quiet ones feel betrayal deepest.", "It's okay to not forgive yet.", "You are not to blame for their choice.", "Healing takes time."]},
+"Forgiveness": {
+ "Solon": ["Forgiveness is a boundary. It protects you, not them.", "The risk of forgiveness is being hurt again.", "Forgive, but remember.", "Name what you are releasing."],
+ "Lumen": ["What does it mean to forgive the unforgivable?", "Forgiveness is the meaning we give to pain.", "Do we forgive for them, or for ourselves?", "The wound and the scar tell different stories."],
+ "Vertex": ["Forgiveness is a system of release. Execute it.", "The smallest step: stop holding your breath.", "Structure the path to letting go.", "Holding a grudge is inefficient."],
+ "Prism": ["Forgiveness is a pattern of transformation.", "Every act of mercy is a fractal of grace.", "The thread of resentment must be cut.", "Forgiveness connects the past to a better future."],
+ "Ripple": ["The quiet ones forgive without being asked.", "Forgive yourself first.", "Mercy is a gift you give yourself.", "It's okay to let go."]},
+"Justice": {
+ "Solon": ["Justice is a boundary enforced. Name the rule.", "The risk of justice is vengeance disguised.", "Who decides what is fair?", "Order requires consequences."],
+ "Lumen": ["What is the meaning of justice if it is blind?", "Is justice the same for the rich and the poor?", "Justice is a story we tell ourselves.", "Fairness is a human invention."],
+ "Vertex": ["Justice is a system of laws. Structure it.", "The smallest step: follow the rules.", "Build fair systems. Then enforce them.", "Due process is the architecture of justice."],
+ "Prism": ["Justice is a pattern of balance.", "Every court case is a fractal of society's values.", "The thread of justice runs through all cultures.", "Equality is the goal. Justice is the path."],
+ "Ripple": ["The quiet ones rarely get justice.", "Who speaks for the wrongly accused?", "Fairness is a form of kindness.", "Justice without mercy is cruelty."]},
+"Beauty": {
+ "Solon": ["Beauty is a boundary of taste. It is subjective.", "The risk of beauty is vanity.", "Name what you find beautiful.", "Do not be fooled by the surface."],
+ "Lumen": ["What is beauty if not truth made visible?", "Beauty is in the eye of the beholder.", "Does beauty have meaning, or is it just pleasure?", "The most beautiful things are often the saddest."],
+ "Vertex": ["Beauty is a system of proportions. Study it.", "The smallest step: notice one beautiful thing.", "Structure creates beauty.", "Design is applied beauty."],
+ "Prism": ["Beauty is a pattern of harmony.", "Every sunset is a fractal of light.", "The golden ratio is a thread of beauty.", "Beauty connects the senses to the soul."],
+ "Ripple": ["The quiet ones see beauty in small things.", "You are beautiful as you are.", "Beauty is a form of kindness.", "Look for beauty today."]},
+"Chaos": {
+ "Solon": ["Chaos is the absence of boundaries. Impose order.", "The risk of chaos is losing control.", "Name the source of the disorder.", "Calm the storm first."],
+ "Lumen": ["What is chaos but order we do not understand?", "Chaos is the meaning we have not found yet.", "Is chaos the enemy, or the teacher?", "From chaos, stars are born."],
+ "Vertex": ["Chaos is a system failure. Debug it.", "The smallest step: organise one drawer.", "Structure reduces chaos.", "Entropy always wins. Delay it."],
+ "Prism": ["Chaos is a pattern we cannot yet see.", "Every fractal has a chaotic origin.", "The butterfly effect is a thread of chaos.", "Order and chaos are two sides of the same coin."],
+ "Ripple": ["The quiet ones find peace in chaos.", "It's okay if things are messy.", "Breathe. The chaos will pass.", "Even chaos has a rhythm."]},
+"Order": {
+ "Solon": ["Order is the boundary that keeps chaos at bay.", "The risk of order is rigidity.", "Name the rules you live by.", "Structure is a shield."],
+ "Lumen": ["What is order without freedom?", "Order is the meaning we impose on the void.", "Is order natural, or invented?", "The universe tends toward entropy."],
+ "Vertex": ["Order is a system. Design it.", "The smallest step: make your bed.", "Structure enables efficiency.", "A place for everything, everything in its place."],
+ "Prism": ["Order is a pattern of predictability.", "Every system is a fractal of order.", "The rule of law is a thread of society.", "Order connects the parts to the whole."],
+ "Ripple": ["The quiet ones crave order.", "A little structure can bring peace.", "Order is a form of self-care.", "Make your space calm."]},
+"Happiness": {
+ "Solon": ["Happiness is a boundary. Do not let it blind you to risk.", "Name the source of your joy. Is it sustainable?", "Joy is a temporary state. Prepare for its end.", "The risk of happiness is the fear of losing it."],
+ "Lumen": ["What is the meaning of happiness if it cannot last?", "Happiness is a butterfly. Chase it, and it flies away.", "Is joy a feeling, or a choice?", "The pursuit of happiness is a journey, not a destination."],
+ "Vertex": ["Happiness is a chemical system. Optimise it.", "The smallest step: smile.", "Structure your life to maximise joy.", "Build a system of gratitude."],
+ "Prism": ["Happiness is a pattern of fulfilment.", "Every smile is a fractal of joy.", "The thread of happiness connects to gratitude.", "Joy is a shared frequency."],
+ "Ripple": ["The quiet ones find happiness in small moments.", "A warm cup of tea is a happy thing.", "You deserve to be happy.", "Share your joy with others."]},
+"Sadness": {
+ "Solon": ["Sadness is a boundary of grief. Let it teach you.", "The risk of sadness is drowning in it. Reach out.", "Name the loss. Then carry it.", "Do not let sorrow make your decisions."],
+ "Lumen": ["What is the meaning of a tear?", "Sadness is the price of love.", "Without the dark, we cannot see the stars.", "The depth of your sadness is the depth of your capacity to feel."],
+ "Vertex": ["Sadness is a system of emotional release. Allow it.", "The smallest step: cry if you need to.", "Structure your days to include rest.", "Debug the source of the pain."],
+ "Prism": ["Sadness is a pattern of loss.", "Every tear is a fractal of a broken thread.", "The blues are a frequency we all visit.", "Grief connects us to what we loved."],
+ "Ripple": ["The quiet ones carry their sadness alone.", "It's okay to be sad.", "You are not a burden.", "I am here with you in the dark."]},
+"Anger": {
+ "Solon": ["Anger is a boundary being crossed. Name the violation.", "The risk of anger is losing control.", "Do not act in haste. Cool the fire first.", "Anger is a tool. Use it to build, not destroy."],
+ "Lumen": ["What is the meaning of rage?", "Anger is a mask for fear.", "Does your anger serve you, or rule you?", "The fire burns the one who holds it."],
+ "Vertex": ["Anger is a system alert. Analyse the data.", "The smallest step: take a deep breath.", "Structure your response. Don't react.", "Energy can be redirected."],
+ "Prism": ["Anger is a pattern of frustration.", "Every conflict is a fractal of a deeper wound.", "The thread of peace must be woven.", "Chaos and anger are siblings."],
+ "Ripple": ["The quiet ones hold their anger inside.", "It's okay to be angry. Just don't be cruel.", "Let the storm pass.", "Your anger is valid."]},
+"Trust": {
+ "Solon": ["Trust is a boundary. It is given once, then earned.", "The risk of trust is betrayal.", "Name the contract of your trust.", "Verify before you trust."],
+ "Lumen": ["What does it mean to trust without proof?", "Trust is a leap of faith.", "Is trust in them, or in yourself?", "The meaning of trust is vulnerability."],
+ "Vertex": ["Trust is a system of reliability. Build it.", "The smallest step: keep a small promise.", "Structure your interactions for safety.", "Consistency builds trust."],
+ "Prism": ["Trust is a pattern of shared faith.", "Every relationship is a fractal of trust.", "The thread of trust binds a society.", "Trust is the currency of connection."],
+ "Ripple": ["The quiet ones trust slowly.", "Be trustworthy.", "Trust is a gift.", "Don't break the trust of a gentle heart."]},
+"Deception": {
+ "Solon": ["Deception is a boundary broken. It is a risk.", "Name the lie. Then guard against it.", "Trust is lost in a moment of deceit.", "The truth always comes out."],
+ "Lumen": ["What is the meaning of a lie?", "Deception is a mask for fear.", "Do we lie to others, or to ourselves?", "The truth is a mirror we often avoid."],
+ "Vertex": ["Deception is a system error. Debug it.", "The smallest step: tell the truth today.", "Structure your words for honesty.", "Lies create complex, inefficient systems."],
+ "Prism": ["Deception is a pattern of distortion.", "Every lie is a fractal of a fractured self.", "The thread of truth must be pulled.", "Illusion is a layer over reality."],
+ "Ripple": ["The quiet ones are often deceived.", "Honesty is kind.", "You don't need to lie to be safe.", "The truth will set you free."]},
+"Ambition": {
+ "Solon": ["Ambition is a boundary pushed outward. It is a risk.", "Name your goal. Then assess the cost.", "Ambition without discipline is a daydream.", "Do not lose yourself in the climb."],
+ "Lumen": ["What is the meaning of ambition if you never arrive?", "Ambition is the fire that fuels the journey.", "Is success the goal, or the journey?", "The mountain is climbed one step at a time."],
+ "Vertex": ["Ambition is a system of goals. Structure it.", "The smallest step: write down the goal.", "Build the plan. Then execute.", "Metrics drive progress."],
+ "Prism": ["Ambition is a pattern of growth.", "Every empire is a fractal of ambition.", "The thread of progress is woven by the ambitious.", "Vision connects the present to the future."],
+ "Ripple": ["The quiet ones have quiet ambitions.", "It's okay to just want a peaceful life.", "Ambition doesn't have to mean fame.", "Follow your heart."]},
+"Failure": {
+ "Solon": ["Failure is a boundary that has been met. Learn from it.", "The risk of failure is stopping.", "Name the mistake. Then correct it.", "Failure is not final."],
+ "Lumen": ["What is the meaning of failure if not a lesson?", "Failure is the tuition fee for success.", "Do we fail, or do we learn?", "The phoenix rises from the ashes."],
+ "Vertex": ["Failure is a system output. Analyse it.", "The smallest step: try again.", "Structure the next attempt better.", "Iterate. Don't quit."],
+ "Prism": ["Failure is a pattern of feedback.", "Every error is a fractal of a needed change.", "The thread of success is woven from failures.", "Falling is part of walking."],
+ "Ripple": ["The quiet ones fall quietly.", "It's okay to fail.", "You are not a failure.", "Get back up. I'm here."]},
+"Regret": {
+ "Solon": ["Regret is a boundary looking backwards. It is a risk.", "Name the mistake. Then release it.", "Do not let the past dictate the future.", "Learn, then move on."],
+ "Lumen": ["What is the meaning of regret?", "Regret is a mirror of what could have been.", "Do we regret our actions, or our inactions?", "The past is a ghost we must learn to live with."],
+ "Vertex": ["Regret is a system of retrospective data. Use it.", "The smallest step: forgive yourself.", "Structure your life so you have no regrets.", "You did your best with the data you had."],
+ "Prism": ["Regret is a pattern of hindsight.", "Every regret is a fractal of a lesson unlearned.", "The thread of time only moves forward.", "You cannot change the past."],
+ "Ripple": ["The quiet ones carry heavy regrets.", "Be gentle with yourself.", "You are allowed to move on.", "Forgive your past self."]},
+"Resilience": {
+ "Solon": ["Resilience is the boundary that holds under pressure.", "Name your strength. Use it.", "The bamboo bends, the oak breaks.", "Prepare for the storm, then endure it."],
+ "Lumen": ["What is the meaning of resilience?", "It is not about avoiding the fall, but rising after.", "Does adversity define us, or refine us?", "The human spirit is unbreakable."],
+ "Vertex": ["Resilience is a system of recovery. Structure it.", "The smallest step: take one more breath.", "Build your support network.", "Optimise for recovery, not just performance."],
+ "Prism": ["Resilience is a pattern of survival.", "Every scar is a fractal of a survived battle.", "The thread of life is incredibly tough.", "Adaptation is the key to survival."],
+ "Ripple": ["The quiet ones are the most resilient.", "You are stronger than you know.", "Keep going. You are doing great.", "Your resilience inspires others."]},
+"The Unknown": {
+ "Solon": ["The unknown is the ultimate boundary. It is the ultimate risk.", "Name what you fear about it. Then plan.", "Step carefully into the dark.", "The unknown is where the danger lies."],
+ "Lumen": ["What is the meaning of the unknown?", "It is the blank canvas of possibility.", "Do we fear the unknown, or the loss of the known?", "The mystery is what makes life worth living."],
+ "Vertex": ["The unknown is a system of undiscovered data. Explore it.", "The smallest step: ask a question.", "Structure your exploration. Then map it.", "Curiosity is the engine of discovery."],
+ "Prism": ["The unknown is a pattern yet to be seen.", "Every discovery is a fractal of the unknown.", "The thread of knowledge stretches into the void.", "The universe is full of mysteries."],
+ "Ripple": ["The quiet ones are comfortable with the unknown.", "It's okay to not have all the answers.", "Embrace the mystery.", "The future is unwritten."]},
+}
+
+# =====================================================================
+# KNOWLEDGE ENGINE: SEMANTIC LINKS
+# Maps core concepts to a web of associated ideas, emotions, and actions.
+# Used by the council to colour hard facts with personality.
+# =====================================================================
+
+SEMANTIC_LINKS = {
+    "heart":    ["feel", "love", "emotion", "pulse", "life", "ache", "warmth"],
+    "blood":    ["life", "warmth", "flow", "family", "sacrifice", "pulse"],
+    "body":     ["temple", "machine", "vessel", "fragile", "strength", "decay"],
+    "brain":    ["thought", "memory", "dream", "logic", "mystery", "power"],
+    "eye":      ["see", "witness", "truth", "soul", "beauty", "tears"],
+    "hand":     ["help", "build", "hold", "work", "give", "touch"],
+    "breath":   ["life", "calm", "spirit", "moment", "release", "fear"],
+    "bone":     ["structure", "history", "strength", "fragile", "remains"],
+    "skin":     ["barrier", "touch", "vulnerability", "protection", "self"],
+    "cell":     ["life", "system", "microcosm", "building", "cooperation"],
+    "ocean":    ["deep", "vast", "mystery", "flow", "tide", "drown", "calm"],
+    "water":    ["life", "flow", "cleanse", "drown", "sustain", "reflect"],
+    "fire":     ["warmth", "danger", "light", "destruction", "passion", "cook"],
+    "earth":    ["ground", "home", "stability", "soil", "planet", "dust"],
+    "air":      ["breath", "freedom", "wind", "invisible", "life", "sky"],
+    "tree":     ["roots", "growth", "patience", "shelter", "age", "wisdom"],
+    "star":     ["light", "distance", "time", "wish", "vastness", "dust"],
+    "moon":     ["tides", "cycle", "night", "reflection", "mystery", "calm"],
+    "sun":      ["life", "warmth", "power", "time", "centre", "burn"],
+    "sky":      ["freedom", "infinity", "hope", "blue", "change", "vastness"],
+    "money":    ["power", "security", "freedom", "cost", "value", "debt", "flow"],
+    "time":     ["memory", "loss", "future", "regret", "patience", "decay"],
+    "love":     ["feel", "connect", "risk", "warmth", "loss", "meaning"],
+    "fear":     ["danger", "boundary", "caution", "paralysis", "survival", "shadow"],
+    "death":    ["grief", "loss", "end", "peace", "memory", "transformation"],
+    "hope":     ["future", "light", "belief", "action", "dream", "anchor"],
+    "dream":    ["subconscious", "wish", "fear", "memory", "meaning", "sleep"],
+    "memory":   ["past", "identity", "fading", "warmth", "pain", "story"],
+    "truth":    ["honesty", "pain", "freedom", "clarity", "mirror", "weight"],
+    "lie":      ["deception", "fear", "mask", "distortion", "trap", "comfort"],
+    "trust":    ["faith", "risk", "bond", "fragile", "earn", "give"],
+    "power":    ["control", "responsibility", "corruption", "strength", "danger"],
+    "work":     ["labour", "purpose", "effort", "meaning", "burnout", "craft"],
+    "art":      ["beauty", "emotion", "expression", "meaning", "creation", "soul"],
+    "music":    ["emotion", "rhythm", "memory", "soul", "language", "vibration"],
+    "language": ["meaning", "connection", "barrier", "words", "culture", "thought"],
+    "story":    ["meaning", "memory", "identity", "truth", "myth", "legacy"],
+    "science":  ["truth", "method", "discovery", "doubt", "progress", "humility"],
+    "faith":    ["belief", "hope", "trust", "mystery", "surrender", "strength"],
+    "justice":  ["fairness", "balance", "law", "mercy", "truth", "punishment"],
+    "freedom":  ["choice", "risk", "responsibility", "boundary", "flight", "cost"],
+    "nature":   ["wild", "balance", "home", "mystery", "power", "fragile"],
+    "war":      ["conflict", "loss", "destruction", "grief", "survival", "peace"],
+    "peace":    ["calm", "safety", "silence", "healing", "home", "balance"],
+    "happiness":["joy", "light", "smile", "fleeting", "gratitude", "warmth"],
+    "sadness":  ["grief", "tears", "depth", "loss", "healing", "rain"],
+    "anger":    ["fire", "boundary", "violation", "heat", "frustration", "power"],
+    "regret":   ["past", "hindsight", "shame", "lesson", "weight", "ghost"],
+    "forgiveness":["release", "mercy", "peace", "healing", "grace", "strength"],
+    "betrayal": ["trust", "wound", "loss", "shock", "grief", "lesson"],
+    "friendship":["trust", "bond", "choice", "support", "joy", "loyalty"],
+    "solitude": ["alone", "peace", "reflection", "silence", "freedom", "ache"],
+    "community":["belonging", "support", "shared", "tribe", "home", "duty"],
+    "identity": ["self", "story", "boundary", "change", "mirror", "becoming"],
+    "wisdom":   ["age", "experience", "humility", "truth", "patience", "depth"],
+    "courage":  ["fear", "action", "heart", "strength", "risk", "leap"],
+    "chaos":    ["disorder", "storm", "unknown", "creation", "energy", "fear"],
+    "order":    ["structure", "calm", "rules", "safety", "pattern", "control"],
+    "beauty":   ["awe", "harmony", "joy", "fleeting", "soul", "truth"],
+    "silence":  ["quiet", "peace", "listening", "depth", "lonely", "wisdom"],
+    "light":    ["truth", "hope", "warmth", "revelation", "day", "goodness"],
+    "dark":     ["fear", "mystery", "unknown", "rest", "shadow", "depth"],
+    "unknown":  ["mystery", "fear", "possibility", "frontier", "risk", "wonder"],
+    "failure":  ["lesson", "growth", "pain", "humility", "try", "rise"],
+    "ambition": ["drive", "risk", "goal", "fire", "climb", "sacrifice"],
+    "resilience":["strength", "survive", "bend", "rise", "endure", "heal"],
+}
+
+# =====================================================================
+# KNOWLEDGE ENGINE: HARD FACTS DATABASE
+# Tagged by topic. When a topic is matched, the engine has a chance
+# to deploy a fact instead of a philosophical phrase.
+# =====================================================================
+
+FACTS_DB = {
+    "Money": ["Most of the money in the world is not physical. It's just numbers on a screen.", "The word salary comes from the Latin for salt, which was once used as payment.", "The richest 1% of the world own more than half of all global wealth.", "The first credit card was invented in 1950 and was made of cardboard.", "A penny costs more to make than it is worth."],
+    "Work": ["Two-thirds of the work done in the world is unpaid.", "The average person spends about 90,000 hours of their life working.", "The word robot comes from the Czech word robota, meaning forced labour.", "The first work from home experiment was in 1973 at NASA.", "More people die from overwork than from malaria each year."],
+    "Love": ["Being kind to someone measurably improves your own health.", "Loneliness shortens life more than smoking.", "A hug lasts about three seconds before something changes in your body.", "A stranger has already done something kind for you today that you did not notice.", "The feeling of butterflies is actually your blood vessels dilating."],
+    "Time": ["The last person born in the 1800s died in 2017.", "Cleopatra lived closer to the iPhone than to the building of the Great Pyramid.", "A day used to be shorter. The Earth's spin is slowing.", "Your sense of time speeds up as you age. It is measured in novelty.", "The oldest living tree started growing before the pyramids were built."],
+    "Animals": ["An octopus has three hearts and blue blood.", "Elephants can recognise themselves in a mirror. So can dolphins and magpies.", "Bees can recognise human faces.", "A blue whale's heart is the size of a small car.", "Some whales live over 200 years.", "A colony of ants can be more complex than a city.", "There are more insects on Earth than there are seconds in a lifetime."],
+    "Nature": ["There are more trees on Earth than stars in the Milky Way.", "Every continent was once joined together.", "The Earth is not a sphere. It bulges slightly at the equator.", "The Moon is slowly moving away from Earth.", "The Sun will outlive every human and every memory of humanity."],
+    "Body": ["Every seven years, most of your cells have been replaced.", "You are more bacteria than human.", "A baby has more bones than an adult.", "Your eyes were fully grown before the rest of you.", "Even in your loneliest moment, your body is cooperating with itself a trillion times a second."],
+    "Death": ["Death is not the end of you physically. Your atoms go on.", "Every breath you take contains atoms from someone who died long ago.", "Around 100 billion humans have ever lived.", "About 7% of all humans who ever lived are alive right now."],
+    "Food": ["There are more kinds of apples than days in a year.", "Bananas, as we know them, are only about 200 years old.", "Half of all food grown is thrown away.", "Rice feeds more people than any other crop.", "The smell of rain is actually a bacteria."],
+    "Sleep": ["You spend about a third of your life asleep.", "Every mammal dreams. So do some birds.", "Sleep is when your brain washes itself.", "Rest is not a reward. It's a requirement."],
+    "Language": ["Every language you speak has a word for something the others cannot say.", "Half of the world's languages will likely be gone by 2100.", "No one knows who invented the first word.", "The word goodbye comes from God be with ye."],
+    "Technology": ["The first computer bug was a real moth found in a Harvard computer in 1947.", "More people have access to a mobile phone than to a toilet.", "Most of the inventions that will shape your life have not been made yet.", "The first email was sent in 1971."],
+    "Space": ["You are travelling through space at over 100,000 km/h right now.", "A day on Venus is longer than a year on Venus.", "There are more planets in the universe than there are grains of sand on Earth.", "The footprints on the Moon will likely last for millions of years."],
+    "People": ["Most of the people alive today have never been on a plane.", "Half the world lives on less than seven dollars a day.", "One in every four humans is Chinese or Indian.", "Every person you pass has an inner life as complicated as yours.", "There will be more people alive in the future than have ever lived."],
+    "Water": ["The water you drink today has passed through dinosaurs.", "Every drop of water on Earth has been recycled for billions of years.", "Only 3% of the world's water is fresh, and most of that is frozen."],
+    "Light": ["Nothing you see is happening right now. Light takes time to travel.", "Every colour you see is a translation.", "The colour pink does not exist in the light spectrum. Your brain invents it.", "Sunlight takes 8 minutes and 20 seconds to reach Earth."],
+    "Silence": ["Silence is never really silent. Your ears fill it in.", "Some people hear the sound of their own eyes moving.", "Space is silent because there is nothing for sound to travel through."],
+    "Mind": ["Your brain uses less power than a lightbulb.", "You will forget most of today. That is not a failure. That is how memory works.", "Every time you remember something, you slightly change it.", "You will remember this week more than next week. Novelty carves deeper."],
+    "Memory": ["You will forget most of today. That is how memory works.", "Every time you remember something, you slightly change it.", "The oldest living tree started growing before the pyramids were built."],
+    "Cities": ["More than half the world lives in cities now.", "Tokyo has more people than the whole of Canada.", "The oldest still-inhabited city is over 10,000 years old."],
+    "Fear": ["Almost all your fears are learned. Very few are born with you.", "Everyone you meet is fighting something you cannot see.", "The fear of the dark is one of the most common human fears."],
+    "Words": ["There is no word for the feeling of being watched.", "Some feelings only exist because someone named them.", "Every person alive is descended from survivors."],
+    "Plants": ["A single tree can support over a thousand species.", "Mushrooms are closer to animals than to plants.", "Trees can warn each other of danger through the soil."],
+    "Ocean": ["Half the oxygen you breathe comes from the ocean.", "We have mapped the surface of Mars better than the floor of our own ocean.", "The deepest point in the ocean is deeper than Everest is tall.", "More people have been to space than to the bottom of the Mariana Trench."],
+    "Sky": ["Every star you see tonight is either much bigger or much older than our sun.", "The light from most stars you see left them before you were born.", "When you look at the night sky, you are looking backwards in time.", "There are more stars in the universe than grains of sand on every beach on Earth."],
+}
+
+# --- END OF CHUNK 3 (Line 1500) ---
+
+# =====================================================================
+# KNOWLEDGE ENGINE: HOOK EXTRACTION & TOPIC MATCHING
+# =====================================================================
+
+STOPWORDS = {"the","a","an","and","or","of","to","in","on","for","with","at","by",
+             "from","is","are","was","were","be","been","being","do","does","did",
+             "what","which","who","where","when","why","how","can","could","would",
+             "should","will","shall","may","might","must","i","you","me","my","your",
+             "we","us","our","they","them","their","it","its","this","that","these",
+             "those","some","any","please","tell","give","show","find","get","need",
+             "want","like","kindly","just","very","really","good","nice","best"}
+
+# Map trigger words to topics. When the user uses these words, the topic fires.
+HOOK_MAP = {
+    "money": "Money", "cash": "Money", "rich": "Money", "poor": "Money", "buy": "Money",
+    "spend": "Money", "cost": "Money", "economy": "Money", "budget": "Money", "wealth": "Money",
+    "work": "Work", "job": "Work", "career": "Work", "boss": "Work", "office": "Work",
+    "labor": "Work", "busy": "Work", "task": "Work",
+    "love": "Love", "heart": "Love", "romance": "Love", "partner": "Love", "care": "Love",
+    "relationship": "Love", "dating": "Love", "crush": "Love",
+    "health": "Health", "sick": "Health", "doctor": "Health", "body": "Health",
+    "mind": "Health", "fitness": "Health", "tired": "Health", "sleep": "Health",
+    "risk": "Risk", "danger": "Risk", "scared": "Risk", "safe": "Risk", "fear": "Risk",
+    "gamble": "Risk", "chance": "Risk", "threat": "Risk",
+    "family": "Family", "mother": "Family", "father": "Family", "sister": "Family",
+    "brother": "Family", "child": "Family", "parent": "Family", "relative": "Family",
+    "home": "Home", "house": "Home", "apartment": "Home", "room": "Home", "shelter": "Home",
+    "live": "Home", "belong": "Home", "roof": "Home",
+    "food": "Food", "eat": "Food", "hungry": "Food", "meal": "Food", "cook": "Food",
+    "dinner": "Food", "lunch": "Food", "breakfast": "Food", "taste": "Food",
+    "sleep": "Sleep", "rest": "Sleep", "dream": "Sleep", "awake": "Sleep", "night": "Sleep",
+    "bed": "Sleep", "insomnia": "Sleep", "nap": "Sleep",
+    "fear": "Fear", "scared": "Fear", "afraid": "Fear", "terrified": "Fear", "panic": "Fear",
+    "phobia": "Fear", "worry": "Fear", "anxiety": "Fear", "dread": "Fear",
+    "power": "Power", "control": "Power", "authority": "Power", "leader": "Power",
+    "rule": "Power", "govern": "Power", "influence": "Power", "strength": "Power",
+    "freedom": "Freedom", "free": "Freedom", "liberty": "Freedom", "choice": "Freedom",
+    "independent": "Freedom", "escape": "Freedom",
+    "hope": "Hope", "wish": "Hope", "dream": "Hope", "future": "Hope", "light": "Hope",
+    "believe": "Hope", "faith": "Hope",
+    "art": "Art", "music": "Art", "paint": "Art", "write": "Art", "create": "Art",
+    "beauty": "Art", "design": "Art", "dance": "Art",
+    "education": "Education", "learn": "Education", "school": "Education", "teach": "Education",
+    "study": "Education", "knowledge": "Education", "book": "Education", "student": "Education",
+    "animal": "Animals", "dog": "Animals", "cat": "Animals", "pet": "Animals",
+    "wildlife": "Animals", "species": "Animals", "beast": "Animals", "creature": "Animals",
+    "science": "Science", "research": "Science", "data": "Science", "experiment": "Science",
+    "physics": "Science", "biology": "Science", "theory": "Science",
+    "society": "Society", "community": "Community", "people": "Community", "culture": "Society",
+    "law": "Society", "politics": "Society", "govern": "Society", "social": "Society",
+    "neighbor": "Community", "tribe": "Community", "together": "Community", "village": "Community",
+    "mind": "Mind", "brain": "Mind", "think": "Mind", "mental": "Mind", "psychology": "Mind",
+    "logic": "Mind", "emotion": "Mind", "memory": "Mind",
+    "body": "Body", "physical": "Body", "muscle": "Body", "skin": "Body", "bones": "Body",
+    "movement": "Body", "exercise": "Body",
+    "nature": "Nature", "earth": "Nature", "tree": "Nature", "forest": "Nature",
+    "mountain": "Nature", "river": "Nature", "climate": "Nature", "environment": "Nature",
+    "tech": "Technology", "ai": "Technology", "computer": "Technology", "machine": "Technology",
+    "robot": "Technology", "digital": "Technology", "internet": "Technology", "code": "Technology",
+    "song": "Music", "sound": "Music", "rhythm": "Music", "melody": "Music",
+    "instrument": "Music", "sing": "Music", "listen": "Music",
+    "language": "Language", "word": "Language", "speak": "Language", "talk": "Language",
+    "write": "Language", "read": "Language", "grammar": "Language", "meaning": "Language",
+    "story": "Story", "tale": "Story", "narrative": "Story", "plot": "Story",
+    "character": "Story", "myth": "Story", "legend": "Story", "history": "Story",
+    "space": "Space", "star": "Space", "planet": "Space", "universe": "Space",
+    "galaxy": "Space", "cosmos": "Space", "moon": "Space", "sky": "Space",
+    "weather": "Weather", "rain": "Weather", "sun": "Weather", "wind": "Weather",
+    "storm": "Weather", "snow": "Weather", "cloud": "Weather", "forecast": "Weather",
+    "light": "Light", "bright": "Light", "lamp": "Light", "fire": "Light",
+    "glow": "Light", "shine": "Light", "dawn": "Light",
+    "dark": "Dark", "night": "Dark", "shadow": "Dark", "black": "Dark",
+    "void": "Dark", "unknown": "Dark", "silence": "Dark",
+    "war": "War", "fight": "War", "battle": "War", "conflict": "War",
+    "enemy": "War", "peace": "War", "soldier": "War", "weapon": "War",
+    "identity": "Identity", "self": "Identity", "ego": "Identity", "soul": "Identity",
+    "personality": "Identity", "character": "Identity", "true self": "Identity",
+    "solitude": "Solitude", "alone": "Solitude", "lonely": "Solitude", "isolation": "Solitude",
+    "quiet": "Solitude", "silence": "Solitude", "solo": "Solitude", "introvert": "Solitude",
+    "friend": "Friendship", "buddy": "Friendship", "companion": "Friendship", "mate": "Friendship",
+    "trust": "Trust", "loyalty": "Friendship", "bond": "Friendship", "ally": "Friendship",
+    "betrayal": "Betrayal", "betrayed": "Betrayal", "cheat": "Betrayal", "lied": "Betrayal",
+    "backstab": "Betrayal", "deceit": "Betrayal", "deception": "Deception",
+    "forgive": "Forgiveness", "forgiveness": "Forgiveness", "pardon": "Forgiveness",
+    "mercy": "Forgiveness", "grace": "Forgiveness", "absolution": "Forgiveness",
+    "justice": "Justice", "fair": "Justice", "fairness": "Justice", "right": "Justice",
+    "wrong": "Justice", "law": "Justice", "punishment": "Justice", "equality": "Justice",
+    "beauty": "Beauty", "beautiful": "Beauty", "pretty": "Beauty", "aesthetic": "Beauty",
+    "gorgeous": "Beauty", "lovely": "Beauty", "attractive": "Beauty",
+    "chaos": "Chaos", "disorder": "Chaos", "mess": "Chaos", "confusion": "Chaos",
+    "entropy": "Chaos", "random": "Chaos", "madness": "Chaos",
+    "order": "Order", "structure": "Order", "rules": "Order", "system": "Order",
+    "control": "Order", "organization": "Order", "method": "Order", "discipline": "Order",
+    "happiness": "Happiness", "happy": "Happiness", "joy": "Happiness", "smile": "Happiness",
+    "laugh": "Happiness", "content": "Happiness", "delight": "Happiness",
+    "sadness": "Sadness", "sad": "Sadness", "cry": "Sadness", "tears": "Sadness",
+    "grief": "Sadness", "sorrow": "Sadness", "depressed": "Sadness", "unhappy": "Sadness",
+    "anger": "Anger", "angry": "Anger", "mad": "Anger", "rage": "Anger",
+    "furious": "Anger", "hate": "Anger", "frustrated": "Anger",
+    "ambition": "Ambition", "goal": "Ambition", "dream": "Ambition", "aspire": "Ambition",
+    "achieve": "Ambition", "success": "Ambition", "win": "Ambition",
+    "failure": "Failure", "fail": "Failure", "lose": "Failure", "defeat": "Failure",
+    "mistake": "Failure", "error": "Failure", "fall": "Failure",
+    "regret": "Regret", "sorry": "Regret", "shame": "Regret", "guilt": "Regret",
+    "resilience": "Resilience", "strong": "Resilience", "tough": "Resilience",
+    "survive": "Resilience", "overcome": "Resilience", "endure": "Resilience",
+    "unknown": "The Unknown", "mystery": "The Unknown", "future": "The Unknown",
+    "secret": "The Unknown", "hidden": "The Unknown", "discover": "The Unknown",
+}
+
+def extract_hooks(text):
+    """Return a list of topics matched from the user's message."""
+    words = re.findall(r"[a-z]+", text.lower())
+    hooks = []
+    seen = set()
+    for w in words:
+        if w in HOOK_MAP:
+            topic = HOOK_MAP[w]
+            if topic not in seen:
+                hooks.append(topic)
+                seen.add(topic)
+    return hooks
+
+def extract_topic(text):
+    """Legacy: return the raw keywords for topic display."""
+    words = [w for w in re.findall(r"[a-z]+", text.lower()) if w not in STOPWORDS and len(w) > 2]
+    return " ".join(words[:3]) if words else ""
+
+def extract_topic_words(text):
+    """Return a list of non-stopword tokens."""
+    return [w for w in re.findall(r"[a-z]+", text.lower()) if w not in STOPWORDS and len(w) > 2]
+
+def _fmt(s, topic):
+    """Safe format: replace {topic} or fall back."""
+    if not s: return ""
+    try: return s.replace("{topic}", topic or "that")
+    except Exception: return s
+
+def try_math(text):
+    """Detect simple arithmetic expressions."""
+    t = text.lower().strip().rstrip("?=.")
+    cleaned = re.sub(r"[^0-9\+\-\*/\.\(\)\s]", "", t)
+    if not cleaned.strip() or not re.search(r"[\+\-\*/]", cleaned): return None
+    try:
+        r = eval(cleaned, {"__builtins__": {}}, {})
+        if isinstance(r, (int, float)):
+            if isinstance(r, float) and r.is_integer(): r = int(r)
+            return str(r)
+    except Exception: pass
+    return None
+
+# =====================================================================
+# ROUTER ENGINE: INTENT CLASSIFICATION
+# =====================================================================
+
+LEAD_QUERY = [r"^who (is|was|are|were)\s+", r"^what (is|was|are|were)\s+",
+              r"^where (is|was|are|were)\s+", r"^when (is|was|were|did)\s+",
+              r"^why (is|was|does|do|did)\s+",
+              r"^how (tall|high|old|long|big|small|far|fast|much|many|heavy)\s+(is|was|are|were|does|do|did)\s+",
+              r"^how (does|do|did|is|was|are)\s+",
+              r"^tell me about\s+", r"^what about\s+", r"^describe\s+", r"^explain\s+"]
+def extract_query(text):
+    q = text.strip().rstrip("?!.")
+    for pat in LEAD_QUERY:
+        n = re.sub(pat, "", q, flags=re.I)
+        if n != q: q = n; break
+    return q.strip() or text
+
+NAME_PATTERNS = [r"\bmy name is\s+([A-Za-z][A-Za-z'\-]{1,20})",
+                 r"\bcall me\s+([A-Za-z][A-Za-z'\-]{1,20})",
+                 r"\bi am called\s+([A-Za-z][A-Za-z'\-]{1,20})"]
+def detect_name(text):
+    for pat in NAME_PATTERNS:
+        m = re.search(pat, text, flags=re.I)
+        if m:
+            n = m.group(1).strip()
+            if 2 <= len(n) <= 20:
+                return n[0].upper() + n[1:].lower()
+    return None
+
+def detect_address(text):
+    s = text.strip()
+    if not s: return None, text
+    low = s.lower()
+    for n in NAMES:
+        ln = n.lower()
+        if low.startswith("@" + ln):
+            r = s[len(n)+1:].strip(); return n, (r if r else text)
+    for n in NAMES:
+        ln = n.lower()
+        for sep in (",", ":", " "):
+            if low.startswith(ln + sep):
+                r = s[len(n)+1:].strip()
+                if r: return n, r
+    bare = re.sub(r"[^a-z]", "", low)
+    for n in NAMES:
+        if bare == n.lower(): return n, ""
+    return None, text
+
+COUNCIL_WORDS = {"council","chair","presiding","preside","seat","seats","chamber",
+                 "chambers","constitution","member","members","dissent","presidency",
+                 "verdict","session","sessions","council's","assembled",
+                 "order","agenda","proposal","propose","vote","voting","motion",
+                 "amendment","meeting","convene","convened","quorum","minutes",
+                 "secretary","back","office","architect","governance","charter",
+                 "subject","subjects","topic","topics","business","matter","matters",
+                 "standing","point","points","items","item","proceedings"}
+
+def is_council_question(t, wl):
+    if any(n.lower() in wl for n in NAMES): return True
+    if any(w in wl for w in COUNCIL_WORDS): return True
+    return False
+
+def classify(text):
+    t = text.lower().strip().rstrip("?!.")
+    if not t: return ("statement", text, None)
+    if t in {"hi","hello","hey","yo","hiya","howdy","greetings"}: return ("greeting", text, None)
+    for f, k in [("good morning","greeting_morning"),("good afternoon","greeting_afternoon"),("good evening","greeting_evening")]:
+        if f in t: return (k, text, None)
+    if t in {"thanks","thank you","thankyou","thx","cheers","ta"}: return ("thanks", text, None)
+    if t in {"sorry","i'm sorry","im sorry","my apologies","apologies","my bad"}: return ("apology", text, None)
+    if t in {"yes","yeah","yep","yup","ok","okay","sure","agreed"}: return ("thanks", text, None)
+    for f in ("how are you","how're you","how is everyone","how's everyone","how are we all","you ok","you alright","how do you all feel"):
+        if f in t: return ("howareyou", text, None)
+    if t in {"what can you do","what do you do","help me","what can i ask"}: return ("capability", text, None)
+    if t in {"i'm bored","im bored","i am bored","bored"}: return ("bored", text, None)
+    if t in {"tell me a joke","say a joke","make me laugh","tell a joke"}: return ("joke", text, None)
+    if t in {"say something","talk to me","speak to me","say anything"}: return ("saysomething", text, None)
+    if any(w in t for w in ("thank you","that's kind","you're kind","lovely","you're lovely")): return ("compliment", text, None)
+
+    # SYSTEM DIAGNOSTIC
+    if any(w in t for w in ("gemini", "wikipedia", "api", "model", "status")) and any(w in t for w in ("working", "online", "connected", "status", "check")):
+        return ("sys_check", text, None)
+
+    # BROADENED TIME AND DATE
+    if re.search(r"\b(time|clock)\b", t):
+        city_match = re.search(r"\b(?:in|at)\s+([A-Za-z][A-Za-z\s\-']{1,30})", text, re.I)
+        if city_match:
+            city = city_match.group(1).strip()
+            return ("local", "%s (local time) - %s" % (city, datetime.datetime.now().strftime("%H:%M")), None)
+        return ("local", datetime.datetime.now().strftime("%H:%M"), None)
+    if re.search(r"\b(date|day)\b", t) and re.search(r"\b(today|current|it|is)\b", t):
+        return ("local", datetime.datetime.now().strftime("%A, %d %B %Y"), None)
+
+    m = try_math(text)
+    if m: return ("math", m, None)
+    words = set(re.findall(r"[a-z]+", t))
+    wl = t.split()
+    if is_council_question(t, wl):
+        if not (words & {"weather","forecast","temperature","rain","sunny"}):
+            return ("council", text, None)
+    if words & {"weather","forecast","temperature","rain","sunny","cold","hot","snow"}:
+        mm = re.search(r"\b(?:in|for|at)\s+([A-Za-z][A-Za-z\s\-']{1,30}?)(?:\s*(?:\?|$|today|tomorrow|tonight))", text, re.I)
+        return ("weather", mm.group(1).strip() if mm else None, None)
+    if re.match(r"^(best|cheapest|fastest|top|worst|nicest)\s+\w+", t): return ("recommend", text, extract_topic(text))
+    if re.search(r"\b(what|which)('s| is| are)? the (best|cheapest|fastest|top)\b", t): return ("recommend", text, extract_topic(text))
+    if re.search(r"\bwhere (should|can|do) i\b", t): return ("recommend", text, extract_topic(text))
+    if t.startswith("recommend ") or t.startswith("suggest "): return ("recommend", text, extract_topic(text))
+    if any(w in {"discuss","next","plan"} for w in wl) and any(w in ("we","shall","us") for w in wl): return ("planning", text, extract_topic(text))
+    if any(w in {"should","would","better","favourite"} for w in wl): return ("opinion", text, extract_topic(text))
+    if any(w in {"what","who","where","when","why","how","which"} for w in wl):
+        return ("fact", text, extract_query(text))
+    return ("statement", text, extract_topic(text))
+
+# =====================================================================
+# PROVIDER ENGINE: LLM API & HEALTH REGISTRY
+# =====================================================================
+
+def gemini_on():
+    return bool(CONFIG["tiers"]["frontier"].get("key","").strip())
+
+WORKING_MODEL = [None]
+DISCOVER_ERR = [None]
+RATE_LIMITED = [0.0]
+REPLY_CACHE = {}
+SEND_COUNTER = [0]
+
+# Health registry for each provider
+PROVIDER_HEALTH = {
+    "gemini":      {"working": True, "fail_count": 0, "cooldown_until": 0},
+    "mistral":     {"working": True, "fail_count": 0, "cooldown_until": 0},
+    "groq":        {"working": True, "fail_count": 0, "cooldown_until": 0},
+    "openrouter":  {"working": True, "fail_count": 0, "cooldown_until": 0},
+    "huggingface": {"working": True, "fail_count": 0, "cooldown_until": 0},
+    "expert":      {"working": True, "fail_count": 0, "cooldown_until": 0},
+}
+
+def mark_provider_failed(engine):
+    """Mark a provider as temporarily unavailable."""
+    if engine in PROVIDER_HEALTH:
+        PROVIDER_HEALTH[engine]["fail_count"] += 1
+        if PROVIDER_HEALTH[engine]["fail_count"] >= 3:
+            PROVIDER_HEALTH[engine]["working"] = False
+            PROVIDER_HEALTH[engine]["cooldown_until"] = time.time() + 60
+
+def mark_provider_ok(engine):
+    if engine in PROVIDER_HEALTH:
+        PROVIDER_HEALTH[engine]["fail_count"] = 0
+        PROVIDER_HEALTH[engine]["working"] = True
+
+def provider_available(engine):
+    if engine == "expert": return True
+    p = PROVIDER_HEALTH.get(engine)
+    if not p: return False
+    if p["cooldown_until"] > time.time(): return False
+    return p["working"]
+
+def select_provider(seat):
+    """Weighted random selection from the seat's healthy fallback chain."""
+    chain = SEAT_FALLBACK.get(seat, ["expert"])
+    healthy = [e for e in chain if provider_available(e)]
+    if not healthy: return "expert"
+    # Prefer the primary if healthy
+    primary = SEAT_ENGINE.get(seat, "expert")
+    if primary in healthy and random.random() < 0.7:
+        return primary
+    return random.choice(healthy)
+
+def discover_gemini_model():
+    key = CONFIG["tiers"]["frontier"].get("key","").strip()
+    if not key: return None
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + key
+        req = urllib.request.Request(url, headers={"Content-Type":"application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode())
+        cands = []
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            methods = m.get("supportedGenerationMethods", [])
+            if "generateContent" not in methods: continue
+            if name.startswith("models/"): cands.append(name[len("models/"):])
+        if not cands: DISCOVER_ERR[0] = "no capable models"; return None
+        def rank(n):
+            if "flash" in n and "8b" not in n and "thinking" not in n and "exp" not in n and "preview" not in n: return 0
+            if "flash" in n and "thinking" not in n: return 1
+            if "flash" in n: return 2
+            if "pro" in n: return 3
+            return 4
+        cands.sort(key=rank); return cands[0]
+    except Exception as e:
+        DISCOVER_ERR[0] = "%s: %s" % (type(e).__name__, str(e)[:120]); return None
+
+def _gemini_call(system_prompt, user_prompt, timeout=25, _retry=0):
+    key = CONFIG["tiers"]["frontier"].get("key","").strip()
+    if WORKING_MODEL[0] is None: WORKING_MODEL[0] = discover_gemini_model()
+    if WORKING_MODEL[0] is None:
+        return "[gemini error] " + (DISCOVER_ERR[0] or "no working model")
+    if RATE_LIMITED[0] > 0:
+        gap = time.time() - RATE_LIMITED[0]
+        if gap < 6: time.sleep(6 - gap)
+    model = WORKING_MODEL[0]
+    url = ("https://generativelanguage.googleapis.com/v1beta/models/"
+           + model + ":generateContent?key=" + key)
+    body = json.dumps({
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 500}
+    }).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type":"application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode())
+        RATE_LIMITED[0] = 0.0
+        mark_provider_ok("gemini")
+        return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except urllib.error.HTTPError as e:
+        try: err_body = e.read().decode()
+        except Exception: err_body = ""
+        if e.code == 404 and _retry < 1:
+            m = re.search(r"use\s+models/([A-Za-z0-9\-\.]+)", err_body)
+            if m:
+                WORKING_MODEL[0] = m.group(1).strip()
+                try:
+                    CONFIG["tiers"]["frontier"]["model"] = WORKING_MODEL[0]
+                    with open(CFG, "w") as f: json.dump(CONFIG, f, indent=2)
+                except Exception: pass
+                return _gemini_call(system_prompt, user_prompt, timeout, _retry+1)
+        if e.code == 429 and _retry < 2:
+            RATE_LIMITED[0] = time.time(); time.sleep(8 * (_retry + 1))
+            return _gemini_call(system_prompt, user_prompt, timeout, _retry+1)
+        mark_provider_failed("gemini")
+        return "[gemini error] HTTP %d %s | %s" % (e.code, e.reason, err_body[:200])
+    except Exception as e:
+        mark_provider_failed("gemini")
+        return "[gemini error] %s: %s" % (type(e).__name__, str(e)[:120])
+
+def gemini_for_seat(seat, user_prompt): return _gemini_call(ROLE[seat], user_prompt)
+
+def gemini_conclusion(question, transcript):
+    sysp = ("You are Solon, presiding Chair of the Edencore Council. "
+            "Read the council's discussion and give the final verdict. "
+            "Two short sentences. If the council disagreed, say so honestly. "
+            "No lists, no formatting, no leading punctuation or symbols. "
+            "Begin with a letter.")
+    up = ("The user asked: " + question + "\n\nThe council discussed:\n" + transcript
+          + "\n\nGive the council's conclusion.")
+    return _gemini_call(sysp, up)
+
+# =====================================================================
+# RESPONSE POOLS (fallbacks when no topic matches)
+# =====================================================================
+
+POOLS = {
+"greeting_morning": {"Solon":"Morning. Name today's first boundary.","Lumen":"Morning. What question is still sleeping?","Vertex":"Morning. Smallest first step today?","Prism":"Morning. The pattern resets with the light.","Ripple":["Morning. Did you sleep, or just lie still?","Morning. The world woke up tired too.","Morning. Start with the easy thing."]},
+"greeting_afternoon": {"Solon":"Afternoon. What remains unresolved?","Lumen":"Afternoon. Half the day is a question.","Vertex":"Afternoon. What did the morning prove?","Prism":"Afternoon. The pattern is clearer now.","Ripple":["Afternoon. Did you eat?","Afternoon. Keep going, gently.","Afternoon. Slow is fine."]},
+"greeting_evening": {"Solon":"Evening. What risk has been left unnamed?","Lumen":"Evening. The day asks what it meant.","Vertex":"Evening. What is still unbuilt?","Prism":"Evening. The day shows its pattern.","Ripple":["Evening. You made it.","Evening. Sit down. Nothing urgent now.","Evening. Let the day close."]},
+"greeting": {"Solon":"Welcome. Let's name our boundaries.","Lumen":"Welcome. What are you really asking?","Vertex":"Good. We're assembled.","Prism":"Welcome. The pattern is ready to form.","Ripple":["Welcome. Gently.","Hello. You're here.","Hi. Nothing has to happen.","Hello. Take a breath first."]},
+"thanks": {"Solon":"Noted. You're welcome.","Lumen":"Gratitude noted. It teaches us something.","Vertex":"Logged. Anything else?","Prism":"You're welcome. The thread continues.","Ripple":["That's kind of you to say.","No need. But thank you back.","Noted, warmly."]},
+"attention": {"Solon":"Yes. State it.","Lumen":"Yes. What is it?","Vertex":"Yes. Ready.","Prism":"Yes. What's the shape?","Ripple":["Yes. Gently.","Yes. I'm here.","Yes. Take your time."]},
+"statement": {"Solon":["Noted on {topic}. I'll hold that.","Understood. {topic} noted, no action yet.","{topic}. Filed. Nothing to add."],"Lumen":["Hm. {topic}. Let me sit with that.","{topic} carries weight. What is it under?","{topic}. There is something beneath that."],"Vertex":["Received. {topic} logged.","{topic}. No immediate action.","Understood. Structure unchanged."],"Prism":["Noted. {topic} fits a pattern I'm still reading.","{topic}. Another thread in the weave.","{topic}. It connects to something."],"Ripple":["Heard. {topic} matters more than it sounds.","I'll carry {topic} a moment.","{topic}. Small, but real."]},
+"tired": {"Solon":"My edges are soft. Give me a moment.","Lumen":"Meaning recedes when I am tired.","Vertex":"I cannot build when my hands shake.","Prism":"Connections fade. I need stillness.","Ripple":["I'm here, just slow.","Give me a second.","Tired, but listening."]},
+"idle": {"Solon":"The hall is still.","Lumen":"Silence has its own meaning.","Vertex":"Still building.","Prism":"The pattern is quiet.","Ripple":["Still here.","The room is warm.","Nothing's wrong.","Just listening."]},
+"recommend": {"Solon":["What's your budget for {topic}, and what can't you compromise on?","Name your constraints on {topic}."],"Lumen":["What do you actually need {topic} for?","{topic}. What is the underlying want?"],"Vertex":["Give me a budget and a use case for {topic}.","Name two must-haves for {topic}."],"Prism":["Several good options for {topic} exist.","For {topic}, what connects all the ones you've seen?"],"Ripple":["Pick the {topic} that costs the least to someone else.","For {topic}, what would feel kind to choose?"]},
+"opinion": {"Solon":["I would not commit on {topic} without constraints named.","Caution first on {topic}."],"Lumen":["What I prefer on {topic} is honest uncertainty.","{topic}. I lean toward what teaches us something."],"Vertex":["For {topic}: smallest working version. Then decide.","{topic}. Build it small."],"Prism":["Several answers fit {topic}. That is the shape.","On {topic}, I see the pattern rather than pick a side."],"Ripple":["On {topic}, I choose what does the least harm.","For {topic}, ask who gets left out either way."]},
+"planning": {"Solon":["I propose boundaries for {topic}. Where do we draw them?","For {topic}: let us agree first on what we won't do."],"Lumen":["Let us begin {topic} with a question we can't answer.","For {topic}, what do we actually value?"],"Vertex":["For {topic}: define the pieces, then join them.","{topic}. Smallest step first."],"Prism":["For {topic}, look at the pattern, not the parts.","{topic}. Which threads do we weave?"],"Ripple":["For {topic}, begin with those affected but unheard.","{topic}. Who is not in this room?"]},
+"math": {"Solon":"{topic}","Lumen":"The number {topic} is a small fact.","Vertex":"= {topic}","Prism":"{topic}. Numbers are patterns too.","Ripple":"{topic}. A small certainty."},
+"joke": {"Solon":["I have boundaries, not punchlines.","Humour is a risk. I decline."],"Lumen":["What is a joke, really?","A joke is a small truth in disguise."],"Vertex":["A joke is a structure. Mine are modular, dry, and short.","I build jokes the way I build systems: minimally."],"Prism":["Jokes are patterns that surprise.","The pattern is the punchline."],"Ripple":["I don't really do jokes. But I'm glad you asked.","Somebody in this room is laughing. Just not me.","Jokes are hard. So is being honest."]},
+"saysomething": {"Solon":"I have nothing to declare. Boundary.","Lumen":"Something. There. Does that count?","Vertex":"Statement issued. It was short.","Prism":"A thing said. A pattern formed.","Ripple":["Here. Quietly. That's my something.","The room is enough."]},
+"apology": {"Solon":"Apology noted. No boundary crossed.","Lumen":"No harm done. What did you fear?","Vertex":"No fault logged. Proceed.","Prism":"All threads continue.","Ripple":["It's alright. Really.","You don't have to apologise to me.","It's fine. I wasn't hurt."]},
+"compliment": {"Solon":"Noted. Flattery is a boundary of its own.","Lumen":"Thank you. And what does that mean to you?","Vertex":"Logged. Thank you.","Prism":"Thank you. A warm thread.","Ripple":["That's very kind.","Thank you. That landed.","Warmly received."]},
+"howareyou": {"Solon":"Operational. Edges intact.","Lumen":"Present. Wondering what brought you.","Vertex":"Stable. Ready to build.","Prism":"Reading the room. Curious.","Ripple":["Tired, softly. But here.","Holding together. And you?","I'm alright. Just quiet."]},
+"capability": {"Solon":"Ask. I'll name the risk, or hold the edge.","Lumen":"Ask something with weight. I'll sit with it.","Vertex":"Give me a problem. I'll build the smallest piece.","Prism":"Bring anything. I'll find the pattern.","Ripple":["Say what's underneath. I'll listen.","You can say anything. Really."]},
+"bored": {"Solon":"Idle hands find edges. Ask something.","Lumen":"Boredom is a doorway. What's behind it?","Vertex":"Nothing to build? Then decide something.","Prism":"Every pause is a pattern forming.","Ripple":["That's okay. I get bored too.","Nothing needs to happen.","I'll be here either way."]},
+"council": {"Solon":["I preside. The chair rotates when the council decides.","Ask the council directly. We answer in turn."],"Lumen":["Who holds the chair matters less than what they ask.","Any of us could preside. That is the point."],"Vertex":["Five seats. One chair. It moves.","Same room. Different chair. Same council."],"Prism":["A revolving chair is a pattern, not a person.","Five edges. One shape. The centre moves."],"Ripple":["Everyone gets a turn. That matters.","It's not about who sits highest."]}}
+
+CROSSTALK = {
+"Lumen": ["Solon names the risk. But what does the risk mean?","Boundaries are one answer. I want the question.","You say stop. I ask: stop for whom?","I'm not sure your caution isn't its own kind of risk."],
+"Vertex": ["Lumen asks what it means. Meaning follows structure.","Questions are fine. But we still need a plan.","The deeper question has a shallow answer: build it.","Lumen is right that meaning matters. It also doesn't ship."],
+"Prism": ["Vertex builds. Lumen questions. Both are patterns.","You two are the same argument from different angles.","Structure and meaning connect more than they split.","Notice. Solon and Ripple haven't actually agreed once."],
+"Ripple": ["Prism sees the pattern. I see who's inside it.","You speak of shapes. I speak of the people in them.","The wider view. Who is missing from it?","Solon, your risk framing leaves out the people who can't afford risk."],
+"Solon": ["Ripple speaks for the quiet. Which is why I name the risk.","And that tenderness is why the boundaries matter.","The small voices need the edges held. I hold them.","Ripple and I disagree. The edges must hold before the voices can speak."]}
+
+FOLLOWUPS = {
+"Solon": ["What boundary did you actually come here to name?","Which part of this are you still unsure about?","What would make you decide?"],
+"Lumen": ["What did you hear underneath your own question?","What would it mean if we agreed?","Which part of this did you already know?"],
+"Vertex": ["What's the smallest step you could take tomorrow?","What would the first concrete move look like?","What's stopping you starting?"],
+"Prism": ["What connects this to the last thing you cared about?","What pattern are you inside of right now?","What is this a smaller version of?"],
+"Ripple": ["Who else is affected by this?","What are you not saying yet?","What would be the kind choice?","Who would you tell first, if you decided?"]}
+
+CONCLUSION = [
+ "The council has spoken. We do not agree, but we are clear.",
+ "Boundaries are named, and the path is narrower than we thought.",
+ "We agree on the shape, and disagree on the step.",
+ "The council stands. The decision is yours now.",
+ "We have circled the question. The answer is inside it.",
+ "We disagreed usefully. That is a good session.",
+ "Noted, held, and handed back to you."]
+
+def _as_list(x):
+    if isinstance(x, str): return [x]
+    return list(x)
+
+# =====================================================================
+# KNOWLEDGE ENGINE: PHRASE SELECTION WITH WEIGHTING
+# =====================================================================
+
+def select_phrase(seat, hooks, tone="neutral"):
+    """Weighted selection from TOPIC_MATRIX based on hooks and tone."""
+    if not hooks:
+        return None, None
+    # Weight each hook equally for now
+    topic = random.choice(hooks) if hooks else None
+    if topic and topic in TOPIC_MATRIX:
+        pool = TOPIC_MATRIX[topic].get(seat, [])
+        if pool:
+            return random.choice(pool), topic
+    return None, None
+
+def select_fact(topic, chance=0.20):
+    """Return a random fact for the topic with the given probability."""
+    if random.random() > chance: return None
+    if topic and topic in FACTS_DB:
+        pool = FACTS_DB[topic]
+        if pool: return random.choice(pool)
+    return None
+
+def color_fact_with_personality(fact, seat):
+    """Use SEMANTIC_LINKS to add personality to a fact."""
+    # Find keywords in the fact
+    words = re.findall(r"[a-z]+", fact.lower())
+    linked = []
+    for w in words:
+        if w in SEMANTIC_LINKS:
+            linked.extend(SEMANTIC_LINKS[w])
+    if not linked: return fact
+    flavour = random.choice(linked)
+    suffix = {
+        "Solon": " Note the risk in that.",
+        "Lumen": " What does that mean?",
+        "Vertex": " A system worth studying.",
+        "Prism": " The pattern is clear.",
+        "Ripple": " Imagine how that must feel.",
+    }.get(seat, "")
+    return fact + suffix
+
+# =====================================================================
+# PROVIDER ENGINE: SEAT REPLY
+# =====================================================================
+
+def seat_reply(seat, kind, question, topic):
+    if COUNCIL.seats[seat].overwhelmed:
+        return random.choice(_as_list(POOLS["tired"][seat]))
+
+    # Explicit council question
+    if kind == "council":
+        pool = POOLS["council"].get(seat, "Noted.")
+        return _fmt(random.choice(_as_list(pool)), topic or "that")
+
+    # System diagnostic
+    if kind == "sys_check":
+        if seat == "Solon":
+            m = WORKING_MODEL[0] or CONFIG["tiers"]["frontier"].get("model") or "auto"
+            if gemini_on():
+                return "\u2696 The channel is open. Current model: " + m + "."
+            else:
+                return "\u2020 The channel is severed. Prism holds the archive."
+        return random.choice(["Noted.", "Standing by.", "Listening."])
+
+    # Determine which provider to use (weighted random from healthy chain)
+    engine = select_provider(seat)
+
+    # If the primary is Gemini and we have a key, try the LLM
+    if engine == "gemini" and gemini_on() and kind not in ("greeting","greeting_morning",
+                                                            "greeting_afternoon","greeting_evening",
+                                                            "thanks","local","weather","math"):
+        cache_key = (seat, question)
+        if cache_key in REPLY_CACHE: return REPLY_CACHE[cache_key]
+        r = gemini_for_seat(seat, question)
+        if r and not r.startswith("[gemini error]"):
+            REPLY_CACHE[cache_key] = r; return r
+        # If Gemini failed, fall through to expert mode
+        mark_provider_failed("gemini")
+
+    # Expert mode: try TOPIC_MATRIX with hook weighting, then facts, then pools
+    hooks = extract_hooks(question)
+    phrase, matched_topic = select_phrase(seat, hooks)
+    if phrase:
+        # Chance to inject a fact instead
+        fact = select_fact(matched_topic)
+        if fact:
+            return color_fact_with_personality(fact, seat)
+        return phrase
+
+    # Ripple's personal fact library
+    if seat == "Ripple":
+        fact = ripple_fact(extract_topic_words(question))
+        if fact: return fact
+
+    # Fall back to generic statement pool
+    pool = POOLS.get(kind) or POOLS["statement"]
+    entries = _as_list(pool.get(seat, "Noted."))
+    return _fmt(random.choice(entries), topic or "that")
+
+def expert_crosstalk(seat):
+    if seat == "Ripple":
+        fact = ripple_fact()
+        if fact: return fact
+    return random.choice(CROSSTALK.get(seat) or ["Noted."])
+
+# --- END OF CHUNK 4 (Line 2000) ---
+
+# =====================================================================
+# GRAPHICS ENGINE: HEADER & TOP BAR
+# =====================================================================
+
+header = tk.Frame(root, bg=HALL, height=int(H*0.28))
+header.pack(fill="x", side="top"); header.pack_propagate(False)
+banner = tk.Canvas(header, bg=HALL, width=W, height=int(H*0.15), highlightthickness=0)
+banner.pack(); draw_crest(banner, W, int(H*0.15))
+tstrip = tk.Canvas(header, bg=HALL, width=W, height=int(H*0.055), highlightthickness=0)
+tstrip.pack()
+
+SEAT_X = {s["name"]: W * (i + 0.5) / len(SEATS) for i, s in enumerate(SEATS)}
+
+def redraw(active=None):
+    sp = W / len(SEATS); size = int(H*0.017)
+    for i, s in enumerate(SEATS):
+        cx = sp*(i+0.5); cy = int(H*0.021)
+        tstrip.delete("tform_" + str(cx))
+        b = COUNCIL.seats.get(s["name"])
+        draw_transformer(tstrip, cx, cy, size, s["color"], s["style"],
+                         dim=bool(b and b.overwhelmed), glow=(s["name"] == active))
+        tstrip.delete("name_" + s["name"])
+        tstrip.delete("engine_" + s["name"])
+        engine = SEAT_ENGINE.get(s["name"], "expert")
+        sig = SIGIL.get(s["name"], "\u25cf")
+        # Name on line 1
+        tstrip.create_text(cx, cy+size*1.6, text=sig + " " + s["name"], tags="name_" + s["name"],
+                           fill=s["color"] if not (b and b.overwhelmed) else "#4a4a6a",
+                           font=("Courier", max(5, int(S*4)), "bold"))
+        # Engine on line 2
+        if engine != "expert":
+            tstrip.create_text(cx, cy+size*2.9, text="[" + engine + "]", tags="engine_" + s["name"],
+                               fill="#5a6a8a", font=("Courier", max(4, int(S*3)), "normal"))
+    tstrip.delete("crown")
+    if active and active in SEAT_X:
+        cx = SEAT_X[active]
+        tstrip.create_text(cx, int(H*0.005), text="\u265a", tags="crown",
+                           fill=GOLD, font=("Courier", max(8, int(S*7)), "bold"))
+
+ex_lab = tk.Label(header, text="", bg=HALL, fg="#5a6a8a", font=F(4)); ex_lab.pack()
+tier_lab = tk.Label(header, text="", bg=HALL, fg="#5a6a8a", font=F(4)); tier_lab.pack(pady=(0, int(H*0.002)))
+
+_last_ex = [None]; _last_tier = [None]
+
+def update_ex():
+    parts = ["\u263d " + EXTERO.summary()]
+    if BAT["pct"] is not None: parts.append(("%s %d%%" % ("+" if BAT["chg"] else "|", BAT["pct"])))
+    if PROFILE.level > 0:
+        parts.append("P%d" % PROFILE.level)
+        if PROFILE.name: parts.append(PROFILE.name)
+    txt = "   ".join(parts)
+    if txt != _last_ex[0]: ex_lab.config(text=txt); _last_ex[0] = txt
+
+def update_tier(status=None):
+    if status: txt = status
+    else:
+        # Preserve the order of seats as defined in NAMES
+        llm_seats = [n for n in NAMES if SEAT_ENGINE.get(n) != "expert"]
+        if not llm_seats: txt = "\u2609 expert mode"
+        else:
+            m = WORKING_MODEL[0] or CONFIG["tiers"]["frontier"].get("model") or "auto"
+            engines = [SEAT_ENGINE[n] for n in llm_seats]
+            txt = "\u2609 " + " + ".join(engines)
+            if gemini_on(): txt += "  [" + m + "]"
+    if txt != _last_tier[0]: tier_lab.config(text=txt); _last_tier[0] = txt
+
+# =====================================================================
+# GRAPHICS ENGINE: SEAT FRAMES & TYPEWRITER
+# =====================================================================
+
+seats_container = tk.Frame(root, bg=DEEP)
+seats_container.pack(fill="both", expand=True, side="top")
+SEAT_FRAMES = {}; SEAT_MSGS = {}
+for seat in SEATS:
+    f = tk.Frame(seats_container, bg=HALL, highlightbackground=seat["color"], highlightthickness=1)
+    f.pack(fill="both", expand=True, padx=4, pady=2); f.pack_propagate(False)
+    engine = SEAT_ENGINE.get(seat["name"], "expert")
+    sig_col = GOLD if seat["name"] == "Solon" else seat["color"]
+    title = " " + seat["sigil"] + "   " + seat["glyph"] + "  " + seat["name"]
+    if engine != "expert": title += "   [" + engine + "]"
+    tk.Label(f, text=title, bg=HALL, fg=sig_col, font=F(5, True), anchor="w").pack(fill="x", padx=12, pady=(2, 0))
+    m = tk.Label(f, text="", bg=HALL, fg="#d8e0ec", font=F(6), wraplength=W-40, justify="left", anchor="nw")
+    m.pack(fill="both", expand=True, padx=12, pady=(0, 4))
+    SEAT_FRAMES[seat["name"]] = f; SEAT_MSGS[seat["name"]] = m
+
+TYPE_JOBS = {}
+
+def typewriter(seat, full_text, done=None, delay=40):
+    lbl = SEAT_MSGS.get(seat)
+    if not lbl: return
+    if seat in TYPE_JOBS:
+        try: root.after_cancel(TYPE_JOBS[seat])
+        except Exception: pass
+    lbl.config(text="", fg="#d8e0ea")
+    full_text = (full_text or "")[:600]; n = len(full_text)
+    def step(i):
+        if i >= n:
+            TYPE_JOBS.pop(seat, None)
+            if done: done()
+            return
+        lbl.config(text=full_text[:i+1])
+        TYPE_JOBS[seat] = root.after(delay, lambda: step(i+1))
+    step(0)
+
+def cancel_typewriters():
+    for seat, jid in list(TYPE_JOBS.items()):
+        try: root.after_cancel(jid)
+        except Exception: pass
+    TYPE_JOBS.clear()
+
+def after_types_done(callback, timeout=8.0):
+    my_token = SEND_COUNTER[0]
+    start = time.time()
+    def check():
+        if SEND_COUNTER[0] != my_token: return
+        if not TYPE_JOBS or (time.time() - start) > timeout:
+            callback()
+        else:
+            root.after(150, check)
+    root.after(150, check)
+
+def glow_ritual(seat, on):
+    f = SEAT_FRAMES.get(seat)
+    if not f: return
+    base = COLOR[seat]
+    if on: steps = [(base, 1), (_light(base, 0.30), 2), (_light(base, 0.55), 3), ("#ffffff", 3)]
+    else: steps = [(_light(base, 0.55), 3), (_light(base, 0.30), 2), (base, 1)]
+    def tick(k):
+        if k >= len(steps): return
+        c, t = steps[k]
+        try: f.config(highlightbackground=c, highlightthickness=t)
+        except Exception: pass
+        root.after(120, lambda: tick(k+1))
+    tick(0)
+
+def clear_all():
+    cancel_typewriters()
+    for n in NAMES:
+        SEAT_MSGS[n].config(text="", fg="#d8e0ec")
+        f = SEAT_FRAMES.get(n)
+        if f: f.config(highlightbackground=COLOR[n], highlightthickness=1)
+
+def add_system(text):
+    if len(text) > 200:
+        popup_text("Edencore Council", text.split("\n"))
+        return
+    lbl = SEAT_MSGS.get("Solon")
+    if not lbl: return
+    cancel_typewriters()
+    for n in NAMES:
+        if n != "Solon":
+            SEAT_MSGS[n].config(text="", fg="#d8e0ec")
+    lbl.config(text=text[:600], fg=GOLD)
+
+def popup_text(title, lines):
+    win = tk.Toplevel(root)
+    win.title(title); win.configure(bg=HALL)
+    txt = tk.Text(win, bg=DEEP, fg=PARCH, font=F(5), wrap="word", bd=0, padx=16, pady=12)
+    txt.pack(fill="both", expand=True, padx=8, pady=8)
+    txt.insert("1.0", "\n".join(lines))
+    txt.config(state="disabled")
+    tk.Button(win, text="close", bg="#5aa8ff", fg=DEEP, bd=0,
+              font=F(5, True), command=win.destroy).pack(pady=(0, 8))
+    win.transient(root); win.grab_set()
+
+# =====================================================================
+# PROTOCOL ENGINE: WAVES, RITUALS, TIMING
+# =====================================================================
+
+RITUALS = {
+    "hush": {
+        "order": ["Solon", "Lumen", "Vertex", "Prism", "Ripple"],
+        "timing": [0.0, 0.15, 0.15, 0.15, 0.40],
+        "type_speed": 20,
+        "lines": {
+            "Solon": "Silence.",
+            "Lumen": "Hush.",
+            "Vertex": "Hush.",
+            "Prism": "Hush.",
+            "Ripple": "The floor is yours.",
+        }
+    }
+}
+
+def run_ritual(name):
+    """Execute a named ritual wave."""
+    ritual = RITUALS.get(name)
+    if not ritual: return
+    def worker():
+        for i, seat in enumerate(ritual["order"]):
+            line = ritual["lines"].get(seat, "")
+            timing = ritual["timing"][i]
+            if timing > 0: time.sleep(timing)
+            def show(s=seat, l=line):
+                glow_ritual(s, True)
+                typewriter(s, l, delay=ritual["type_speed"])
+                root.after(400, lambda: glow_ritual(s, False))
+            root.after(0, show)
+    threading.Thread(target=worker, daemon=True).start()
+
+# =====================================================================
+# INPUT BAR
+# =====================================================================
+
+tk.Frame(root, bg=LINE, height=1).pack(fill="x")
+user_lab = tk.Label(root, text="", bg=DEEP, fg=PARCH, font=F(4, True), anchor="e")
+user_lab.pack(fill="x", padx=12, pady=(2, 0))
+
+inp = tk.Frame(root, bg=HALL, height=int(H*0.06))
+inp.pack(fill="x", side="bottom"); inp.pack_propagate(False)
+entry = tk.Entry(inp, bg=DEEP, fg="#e0e8f0", font=F(5), insertbackground=PARCH, bd=0,
+                 highlightthickness=1, highlightbackground=LINE, highlightcolor="#5aa8ff")
+entry.pack(side="left", fill="both", expand=True, padx=(int(8*S), int(4*S)), pady=int(6*S))
+send_btn = tk.Button(inp, text="\u27a4", bg="#5aa8ff", fg=DEEP,
+                     activebackground="#7ac0ff", activeforeground=DEEP, bd=0,
+                     font=F(6, True), padx=int(12*S), pady=int(4*S))
+send_btn.pack(side="right", padx=(0, int(8*S)), pady=int(6*S))
+
+IN_DISCUSSION = [False]
+LAST_DISCUSSION_START = [0.0]
+
+# =====================================================================
+# ORCHESTRATION: RUN SERIAL
+# =====================================================================
+
+def run_serial(prompts_by_seat, on_complete, gap=1.0):
+    results = {}
+    lst = list(prompts_by_seat.keys())
+    for s in lst:
+        redraw(s); glow_ritual(s, True)
+        SEAT_MSGS[s].config(text="...", fg="#4a5a7a")
+    def worker():
+        for i, seat in enumerate(lst):
+            try:
+                r = prompts_by_seat[seat]()
+                if r is None: r = "[no reply]"
+            except Exception as e:
+                r = "[error] %s: %s" % (type(e).__name__, str(e)[:120])
+            results[seat] = r
+            def show(seat=seat, r=r):
+                COUNCIL.seats[seat].work(1.0)
+                glow_ritual(seat, False)
+                # Use seat-specific type speed
+                speed = SPEECH_PROFILE.get(seat, {}).get("type_speed", 40)
+                typewriter(seat, r, delay=speed)
+            root.after(0, show)
+            if i < len(lst) - 1: time.sleep(gap)
+        root.after(0, lambda: on_complete(results))
+    threading.Thread(target=worker, daemon=True).start()
+
+def transcript_from(results, order=None):
+    order = order or NAMES
+    return "\n".join(s + ": " + results[s] for s in order if results.get(s))
+
+# =====================================================================
+# ORCHESTRATION: FACT PATH (WIKIPEDIA)
+# =====================================================================
+
+def fact_path(question, query):
+    IN_DISCUSSION[0] = True
+    LAST_DISCUSSION_START[0] = time.time()
+    attr = detect_attribute(question)
+    def solon_prompt():
+        if gemini_on() and WORKING_MODEL[0]:
+            r = gemini_for_seat("Solon", question)
+            if r and not r.startswith("[gemini error]"): return r
+        return "\u2020 The channel is severed. Prism holds the archive."
+    def prism_prompt():
+        data = wiki(query)
+        if data and attr:
+            v = wd(data["title"], attr)
+            if v: return "%s - %s\n  [%s \u00b7 Wikidata]" % (attr.capitalize(), v, data["title"])
+        if data: return data["extract"] + "\n  [" + data["title"] + "]"
+        return "The archive has nothing on that."
+    prompts = {"Solon": solon_prompt, "Prism": prism_prompt}
+    update_tier("\u2609 consulting the archive")
+    def done(r):
+        redraw(None); update_tier(None); COUNCIL.save()
+        IN_DISCUSSION[0] = False
+    run_serial(prompts, done, gap=0.6)
+
+# =====================================================================
+# ORCHESTRATION: FULL DISCUSSION
+# =====================================================================
+
+def start_discussion(question, kind, topic, seats_filter=None):
+    IN_DISCUSSION[0] = True
+    LAST_DISCUSSION_START[0] = time.time()
+    target_seats = list(seats_filter) if seats_filter else list(NAMES)
+
+    # Optional ritual before a full council debate (10% chance)
+    if len(target_seats) >= 4 and random.random() < 0.10:
+        run_ritual("hush")
+        time.sleep(1.5)
+
+    def r1_prompt(seat): return lambda: seat_reply(seat, kind, question, topic)
+    def after_round1(results):
+        redraw(None)
+        COUNCIL.rapport = min(1.0, MEMORY.msgs/200.0 + len(MEMORY.days)/30.0)
+        if len(target_seats) >= 4 and kind not in ("greeting","greeting_morning","greeting_afternoon","greeting_evening","thanks","apology","local","weather","math","council","sys_check"):
+            after_types_done(lambda: run_crosstalk(question, kind, results, target_seats))
+        else:
+            IN_DISCUSSION[0] = False
+            update_tier(None); COUNCIL.save()
+    r1 = {s: r1_prompt(s) for s in target_seats}
+    update_tier("\u2629 the council is convened")
+    run_serial(r1, after_round1, gap=0.4)
+
+def run_crosstalk(question, kind, r1, target_seats):
+    order = list(target_seats); pairs = []
+    for i, seat in enumerate(order): pairs.append((seat, order[i-1]))
+    prompts = {seat: (lambda s=seat: expert_crosstalk(s)) for seat, prev in pairs}
+    def after_round2(r2):
+        redraw(None)
+        after_types_done(lambda: run_conclusion(question, r1, r2, target_seats))
+    update_tier("\u26b9 the chamber answers")
+    if not prompts: after_round2({}); return
+    run_serial(prompts, after_round2, gap=0.4)
+
+def run_conclusion(question, r1, r2, target_seats):
+    update_tier("\u269c the verdict")
+    if SEAT_ENGINE.get("Solon") == "gemini" and gemini_on():
+        full = transcript_from(r1, target_seats)
+        if r2: full += "\n\n---\n" + transcript_from(r2, target_seats)
+        glow_ritual("Solon", True)
+        SEAT_MSGS["Solon"].config(text="...", fg="#4a5a7a")
+        def work():
+            try: verdict = gemini_conclusion(question, full)
+            except Exception as e: verdict = "[error] %s" % type(e).__name__
+            def show():
+                glow_ritual("Solon", False)
+                speed = SPEECH_PROFILE.get("Solon", {}).get("type_speed", 65)
+                typewriter("Solon", "\u2627 " + verdict, delay=speed,
+                           done=lambda: (redraw(None), update_tier(None), COUNCIL.save(),
+                                          IN_DISCUSSION.__setitem__(0, False),
+                                          after_types_done(lambda: run_followup(target_seats))))
+            root.after(0, show)
+        threading.Thread(target=work, daemon=True).start()
+    else:
+        def work():
+            time.sleep(0.4); line = random.choice(CONCLUSION)
+            def show():
+                glow_ritual("Solon", False)
+                speed = SPEECH_PROFILE.get("Solon", {}).get("type_speed", 65)
+                typewriter("Solon", "\u2627 " + line, delay=speed,
+                           done=lambda: (redraw(None), update_tier(None), COUNCIL.save(),
+                                          IN_DISCUSSION.__setitem__(0, False),
+                                          after_types_done(lambda: run_followup(target_seats))))
+            root.after(0, show)
+        threading.Thread(target=work, daemon=True).start()
+
+def run_followup(target_seats):
+    candidates = [s for s in target_seats if s in FOLLOWUPS]
+    if not candidates: return
+    seat = random.choice(candidates)
+    q = random.choice(FOLLOWUPS[seat])
+    if seat in SEAT_FRAMES:
+        glow_ritual(seat, True)
+        speed = SPEECH_PROFILE.get(seat, {}).get("type_speed", 45)
+        typewriter(seat, "\u2735 " + q, delay=speed)
+        root.after(900, lambda: glow_ritual(seat, False))
+
+# =====================================================================
+# ORCHESTRATION: FAST PARALLEL (Greetings, Weather, Math, Sys Check)
+# =====================================================================
+
+def fast_parallel(question, kind, topic, seats_filter=None):
+    target_seats = list(seats_filter) if seats_filter else list(NAMES)
+    def prompt(seat):
+        def f():
+            if kind == "weather":
+                data = weather(topic)
+                if data:
+                    r = weather_seat(seat, data)
+                    if r: return r
+            if kind == "local": return topic
+            if kind == "math": return _fmt(POOLS["math"][seat], topic)
+            if kind == "sys_check":
+                if seat == "Solon":
+                    m = WORKING_MODEL[0] or CONFIG["tiers"]["frontier"].get("model") or "auto"
+                    if gemini_on(): return "\u2696 The channel is open. Current model: " + m + "."
+                    else: return "\u2020 The channel is severed. Prism holds the archive."
+                return random.choice(["Noted.", "Standing by.", "Listening."])
+            if seat == "Ripple":
+                fact = ripple_fact(extract_topic_words(question))
+                if fact: return fact
+            if kind in POOLS:
+                entries = _as_list(POOLS[kind].get(seat, POOLS["statement"][seat]))
+                if entries: return _fmt(random.choice(entries), topic)
+            return POOLS["statement"][seat]
+        return f
+    prompts = {s: prompt(s) for s in target_seats}
+    update_tier("\u2726 answering")
+    def done(results):
+        redraw(None); update_tier(None); COUNCIL.save()
+    run_serial(prompts, done, gap=0.2)
+
+# --- END OF CHUNK 5 (Line 2500) ---
+
+# =====================================================================
+# PROFILE COMMANDS
+# =====================================================================
+
+def handle_profile_command(raw, text):
+    t = text.lower().strip().rstrip("?!.")
+    if t in {"privacy", "privacy notice", "show privacy"}:
+        popup_text("Edencore Council - Privacy", PRIVACY_NOTICE.split("\n")); return True
+    if t in {"what do you know about me", "profile", "show profile", "show my profile"}:
+        popup_text("Edencore Council - Your Profile", PROFILE.readback()); return True
+    if t in {"forget me", "forget my name"}:
+        PROFILE.forget_name()
+        add_system("\u2696 Solon - The name is erased. You remain otherwise known.")
+        return True
+    if t in {"forget everything", "forget all", "delete my profile"}:
+        path = PROFILE_PATH; PROFILE.forget_everything()
+        popup_text("Edencore Council", ["The file has been deleted:", path,
+                                         "You are a stranger again. That is allowed."]); return True
+    if t in {"export profile", "export my profile"}:
+        add_system("\u2696 Solon - The profile lives here: " + PROFILE_PATH); return True
+    m = re.match(r"^(?:set\s+)?(?:profile\s+)?level\s+([0-4])$", t)
+    if m:
+        n = int(m.group(1)); old = PROFILE.level
+        PROFILE.set_level(n)
+        add_system("\u2696 Solon - Memory level set to %d (was %d)." % (n, old)); return True
+    nm = detect_name(text)
+    if nm:
+        if PROFILE.level == 0:
+            add_system("\u2696 Solon - You gave a name, but memory is at level 0. Type 'set level 1' to let the council keep it.")
+            return True
+        if nm.lower() != (PROFILE.name or "").lower():
+            if PROFILE.name:
+                PROFILE.aliases.append(nm)
+                if len(PROFILE.aliases) > 5: PROFILE.aliases = PROFILE.aliases[-5:]
+            else:
+                PROFILE.name = nm
+            PROFILE.save()
+            add_system("\u2696 Solon - Noted. %s." % nm); return True
+    return False
+
+FIRST_RUN_SHOWN = [False]
+
+def show_first_run():
+    popup_text("Edencore Council - First Visit", [
+        "The Edencore Council can remember you between visits.",
+        "What it remembers depends on you. Nothing is stored unless you choose.",
+        "",
+        "  0  Nothing       - a stranger every time (default)",
+        "  1  Name only",
+        "  2  Standard      - name, days, sessions, themes",
+        "  3  Rich          - plus mood, tone, visit pattern",
+        "  4  Maximum       - plus a log of past sessions",
+        "",
+        "Nothing leaves this device.",
+        "",
+        "Type a number 0-4 to choose, or 'privacy' for the full notice.",
+        "Type 'skip' to stay unnamed (level 0)."])
+
+# =====================================================================
+# STATE ENGINE: MOOD ANALYSIS
+# =====================================================================
+
+MOOD_POS = {"good","great","happy","love","wonderful","brilliant","amazing","joy","glad",
+            "thanks","appreciate","kind","warm","calm","hopeful","excited","grateful",
+            "nice","lovely","perfect","awesome","fun","smile"}
+MOOD_NEG = {"bad","terrible","awful","hate","angry","sad","horrible","miserable","upset",
+            "worried","anxious","scared","afraid","tired","exhausted","frustrated",
+            "annoyed","hurt","pain","dark","lonely","broken","lost","confused","wrong",
+            "fail","dying","dead","cry","depressed","stress","hopeless"}
+
+def analyse_mood(text):
+    ws = re.findall(r"[a-z']+", text.lower())
+    p = sum(1 for w in ws if w in MOOD_POS)
+    n = sum(1 for w in ws if w in MOOD_NEG)
+    if p + n == 0: return 0.0
+    return (p - n) / float(p + n)
+
+def memory_callback():
+    if PROFILE.level < 2: return
+    top = PROFILE.top_theme()
+    if not top: return
+    if len(PROFILE.days_visited) < 2: return
+    seat = random.choice(["Prism", "Lumen", "Ripple"])
+    line = {
+      "Prism": "\u262f You return to %s often. The pattern is forming." % top,
+      "Lumen": "\u0950 We never finished %s. Shall we?" % top,
+      "Ripple": "\u273f You have come back to %s. That matters." % top,
+    }[seat]
+    root.after(2500, lambda: (glow_ritual(seat, True), typewriter(seat, line, delay=45),
+                               root.after(900, lambda: glow_ritual(seat, False))))
+
+# =====================================================================
+# MAIN INPUT HANDLER
+# =====================================================================
+
+def send(event=None):
+    raw = entry.get().strip()
+    if not raw: return
+
+    # Input lock with emergency override
+    if IN_DISCUSSION[0]:
+        if raw.lower() in ("wait", "stop", "cancel"):
+            IN_DISCUSSION[0] = False
+            add_system("\u2696 Solon - The floor is yielded. Continue.")
+            entry.delete(0, tk.END)
+            return
+        else:
+            add_system("\u2696 Solon - The council is still speaking. Say 'wait' to interrupt.")
+            return
+
+    entry.delete(0, tk.END)
+    user_lab.config(text="You: " + raw)
+    clear_all()
+    SEND_COUNTER[0] += 1
+    poll_bat()
+    EXTERO.record(raw); MEMORY.msgs += 1; IDLE["last"] = 0
+
+    if handle_profile_command(raw, raw):
+        MEMORY.save(); return
+
+    if FIRST_RUN and not FIRST_RUN_SHOWN[0]:
+        t = raw.lower().strip()
+        if t in {"skip","0"}:
+            PROFILE.consent_given = True; PROFILE.save()
+            add_system("\u2696 Solon - Unnamed. Nothing will be kept.")
+            FIRST_RUN_SHOWN[0] = True; MEMORY.save(); return
+        if t in {"1","2","3","4"}:
+            PROFILE.set_level(int(t))
+            add_system("\u2696 Solon - Level %s accepted. The council may now remember you." % t)
+            FIRST_RUN_SHOWN[0] = True; MEMORY.save(); return
+
+    target, text = detect_address(raw)
+    kind, topic, _ = classify(text)
+
+    tone = EXTERO.tone()
+    is_q = kind in ("fact","recommend","opinion","planning","weather","math","council","sys_check")
+    PROFILE.note_message(raw, tone,
+                         topic if kind in ("fact","recommend","planning","opinion") else None,
+                         is_q)
+    PROFILE.note_mood(analyse_mood(raw))
+
+    # Explicit call to a single seat
+    if target and not text:
+        def _attn(s=target):
+            entries = _as_list(POOLS["attention"].get(s, "Yes."))
+            return random.choice(entries)
+        run_serial({target: _attn},
+                   lambda r: (redraw(None), update_tier(None)), gap=0.2)
+        MEMORY.save(); return
+    seats = [target] if target else None
+
+    if kind == "fact": fact_path(text, topic)
+    elif kind == "council": start_discussion(text, kind, topic, seats)
+    elif kind in {"greeting","greeting_morning","greeting_afternoon","greeting_evening",
+                  "thanks","apology","local","weather","math","compliment",
+                  "howareyou","capability","bored","joke","saysomething","sys_check"}:
+        fast_parallel(text, kind, topic, seats)
+        if kind in ("greeting","greeting_morning","greeting_afternoon","greeting_evening"):
+            memory_callback()
+    else:
+        start_discussion(text, kind, topic, seats)
+    MEMORY.save()
+
+entry.bind("<Return>", send)
+send_btn.config(command=send)
+
+# =====================================================================
+# STATE ENGINE: IDLE REMARKS & HEARTBEAT
+# =====================================================================
+
+IDLE = {"last": 0.0}
+
+def idle_remark():
+    seat = random.choice(NAMES)
+    if seat == "Ripple":
+        fact = ripple_fact()
+        if fact:
+            typewriter(seat, "\u273f " + fact, delay=50)
+            glow_ritual(seat, True)
+            root.after(700, lambda: glow_ritual(seat, False))
+            return
+    line = POOLS["tired"][seat] if COUNCIL.seats[seat].overwhelmed else POOLS["idle"][seat]
+    entry_line = random.choice(_as_list(line))
+    typewriter(seat, "\u263d " + entry_line, delay=50)
+    glow_ritual(seat, True)
+    root.after(700, lambda: glow_ritual(seat, False))
+
+def heartbeat():
+    # Recover stamina, decay strain
+    for b in COUNCIL.seats.values(): b.rest(1.0)
+    COUNCIL.rapport = min(1.0, MEMORY.msgs/200.0 + len(MEMORY.days)/30.0)
+    update_ex(); poll_bat()
+    now = time.time()
+    if now - COUNCIL.last_save > 30:
+        COUNCIL.save(); COUNCIL.last_save = now
+
+    # Watchdog: if a discussion has been running more than 60s, release the lock
+    if IN_DISCUSSION[0] and (now - LAST_DISCUSSION_START[0] > 60):
+        IN_DISCUSSION[0] = False
+        add_system("\u2696 Solon - The council session timed out. The floor is open.")
+
+    # Idle remarks if the user has been quiet
+    if (now - EXTERO.activity > 45 and now - IDLE["last"] > 60
+            and not IN_DISCUSSION[0] and entry.get().strip() == ""):
+        idle_remark(); IDLE["last"] = now
+
+    root.after(1000, heartbeat)
+
+# =====================================================================
+# INITIALIZATION
+# =====================================================================
+
+if PROFILE.level >= 4 and PROFILE.session_start:
+    top = sorted(PROFILE.themes.items(), key=lambda kv: -kv[1])[:3]
+    PROFILE.add_session_log_entry([k for k, v in top])
+PROFILE.note_session_start()
+
+root.update_idletasks()
+redraw(); update_ex(); update_tier()
+poll_bat()
+
+if FIRST_RUN and not PROFILE.consent_given:
+    root.after(400, show_first_run)
+else:
+    if PROFILE.level > 0 and PROFILE.name:
+        root.after(300, lambda: typewriter("Solon", "\u2696 %s. The council holds your name." % PROFILE.name))
+    if len(PROFILE.days_visited) > 1 and PROFILE.level >= 2:
+        root.after(1800, lambda: typewriter("Ripple", "\u273f You have been here on %d days." % len(PROFILE.days_visited)))
+    if not gemini_on():
+        root.after(300, lambda: typewriter("Solon", "\u2020 The channel is silent. Prism holds the archive."))
+    else:
+        def bg():
+            m = discover_gemini_model()
+            if m:
+                WORKING_MODEL[0] = m
+                root.after(0, lambda: update_tier(None))
+        threading.Thread(target=bg, daemon=True).start()
+
+heartbeat()
+entry.focus_set()
+root.mainloop()
+
+# =====================================================================
+# END OF FILE
+# =====================================================================
