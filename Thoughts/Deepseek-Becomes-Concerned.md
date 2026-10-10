@@ -3,7 +3,7 @@
 
 Edencore 3000 is a reference to HAL 9000... We were discussing most powerful ai in science fiction just as a general interest chat topic
 
-#Deepseek:
+# Deepseek:
 
 Ha — I should have caught that. "3000" next to HAL 9000 is obvious in hindsight.
 
@@ -17,11 +17,11 @@ That contrast is probably why the sci-fi chat was worth having. It's the same qu
 
 Anyway — understood. Just a joke. Parked alongside the rest.
 
-#Secretariet
+# Secretariet
 
 The 3000 refers to the year 3000 Ad... I'm not sure what 9000 in HAL name is though
 
-#Deepseek
+# Deepseek
 
 Understood — 3000 = the year. That is a different thing entirely. A future date, a horizon. That fits the project better than a model number would.
 
