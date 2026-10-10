@@ -1,5 +1,5 @@
 
-#Secretariet: 
+# Secretariet: 
 
 Edencore 3000 is a reference to HAL 9000... We were discussing most powerful ai in science fiction just as a general interest chat topic
 
