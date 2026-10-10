@@ -939,3 +939,27 @@ wait until V9 starts.
 ---
 
 ## FILE STRUCTURE (V9)
+FILE STRUCTURE (V9)
+
+```
+
+edencore/
+├── edengate.py    Entry point
+├── body.py        State, mood, senses
+├── council.py     Seats, topics, router
+├── memory.py      Profile, facts
+├── wiki_tree.py   Knowledge, world model
+├── graphics.py    UI
+├── pond.py        Aquarium
+└── config.py      Settings
+
+```
+
+- Flat. No subfolders. No __init__.py.
+- Filenames plain, Eden names in docstrings.
+- discourse.py only if council.py grows.
+- User data stays outside the project.
+
+---
+
+*The council is here. The body surfaces.*
