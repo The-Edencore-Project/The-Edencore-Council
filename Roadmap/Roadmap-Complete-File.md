@@ -807,3 +807,135 @@ Two files. Paste either into `Wiki-tree.md` and split later, or make two `.md` f
 I chose to keep the two documents separate because they answer different questions. The Wiki Tree document is about *what the Council knows*. The Source Tree document is about *how the Council is built and where it sits*. A future thread reading only one should still be able to place the Council.
 
 When you have saved these, that is the research from this thread, captured.
+
+# V9-A QUEUE
+### The Body Surfaces
+
+Everything queued for V9-A, gathered from
+the Edencore4 thread. Nothing here is
+locked. It is the current to-do list.
+
+---
+
+## GRAPHICS
+
+- Crest title smaller
+- Redraw castles (not emoji — drawn shapes,
+  same style as the crest)
+- Starry night in the header (small dots,
+  drawn)
+- Keep moon, cross, sun — already present
+- Move avatars into each seat's frame
+  (remove the separate top strip)
+- Crown floats in Solon's box above Solon
+- Status line colours:
+    Visitor line   → Vertex green
+    Mood           → Ripple pink
+    Strain         → Solon blue
+    Rapport        → Lumen purple
+    Tier line      → Prism yellow
+- Pond pass:
+    Bigger fish
+    Lighter water
+    More ambience
+    Add one nautilus (drawn spiral)
+    Add two jellyfish (pulsing bells)
+- Layout: more space for replies and
+  keyboard (per the redesign brief)
+
+---
+
+## LOGIC FIXES
+
+- Topic extraction gated behind HOOK_MAP.
+  No hook, no topic. Fall back to "that".
+- Add function words to STOPWORDS:
+  mean, nevermind, all, alive, and the
+  remaining list from the V7.1 audit.
+- Date regex: add month, year.
+- Compare intent: X vs Y.
+  Missing since V8 Opening Note.
+- Wbgetentities: replace the slow Wikidata
+  SPARQL endpoint with the faster
+  wbgetentities API.
+- Fact path: reject common words as
+  entities. Seen firing on:
+    "title"    → Title case (Wikipedia)
+    "location" → I Am Legend (Wikipedia)
+    "month"    → Burt Bacharach song
+- detect_name blocklist: add
+  the, a, an (and anything else that
+  gets stored as a name by mistake).
+- Rename support: "my name is X" should
+  replace the name, not add an alias.
+- Council pool: real answers about council
+  roles, not just philosophy.
+
+---
+
+## NEW FEATURES
+
+- User title field on Profile
+  Plus detect_title() beside detect_name()
+- Command intent: "call me X",
+  "set my title to X", "remember that X".
+- Location intent: honest "I do not know
+  your location" if Pydroid cannot read it.
+- Time / date: one seat speaks, or each
+  seat phrases in its own voice.
+- Phrase table for common formulas:
+    "see you later"    → farewell
+    "take care"        → farewell
+    "i'm fine thank you" → reassurance
+    "one moment"       → pause
+    "i'm still here"   → presence
+    "be back soon"     → absence
+  Matched before topic extraction runs.
+- Discourse layer: three-layer classifier.
+    intent  — social shape (~12 types)
+    mode    — weight (empathy, concern...)
+    address — council or one of five seats
+- Feeling layers one and two (see V9-B).
+
+---
+
+## THREAD DECISIONS NOT YET IN ANY FILE
+
+- Discourse is a *Router layer*, not a new
+  engine. Same classify(), richer output.
+- Address has 6 targets, not 7:
+    council + five seats.
+  "user" is the source, not a target.
+- Two layers, not one list:
+    Social discourse types (~12)
+    Content kinds (~6, from V8)
+  Both run. Discourse decides *how*.
+  Content decides *what about*.
+- Social types include Thanks and Apology.
+  They already exist in V8.
+- Discourse name for the file, if it
+  grows: discourse.py
+  Concept name: The Parley.
+- "Phrase formula engine" — rejected.
+  It is a table and a matcher, not an engine.
+
+---
+
+## DRAFTED BUT NOT YET PASTED
+
+These are written in the Edencore4 thread
+and ready to paste when V9 begins:
+
+- Section 0 — How this project is built
+- Section 4 — Cognitive trajectory (amended)
+- Section 5 — Consciousness clause +
+  computronium contrast
+- Section 12 — The Wiki Tree
+- Section 13 — The Golden Rule
+
+None have changed recently. They can
+wait until V9 starts.
+
+---
+
+## FILE STRUCTURE (V9)
