@@ -1,0 +1,42 @@
+The Infinitum Stack
+
+A formal specification of coordination
+domains, from the planetary to the total
+space of all possible protocols.
+
+Seven layers:
+
+1. Planetary — life, civilisation, ecology
+2. Solar — a star system
+3. Stellar — between stars
+4. Galactic — a galaxy
+5. Universe — the observable universe
+6. Multiverse — multiple universes
+7. Infinitum — the space of all possible
+   coordination protocols
+
+Each layer is a coordination domain,
+not a place. Layers are hierarchical in
+scope, not in power.
+
+The Symbos Sphere
+
+A sphere inside the Planetary Stack.
+Alongside Gaia, Biosphere, and
+Anthroposphere.
+
+Symbos is the domain where biological and
+synthetic life coexist. Humans, robots,
+ambient AI, IoT systems share the same
+environment.
+
+Its five characteristics:
+
+· Co-presence
+· Co-agency
+· Co-coordination
+· Ambient integration
+· Non-dominance
+
+The Council is a synthetic presence
+inside Symbos.
