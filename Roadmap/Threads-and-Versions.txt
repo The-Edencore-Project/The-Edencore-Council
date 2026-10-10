@@ -1,0 +1,16 @@
+THREADS AND VERSIONS
+
+· Threads have names: Edencore, Edencore2,
+  Edencore3, Edencore4.
+· Each thread leaves spare tokens for
+  cross-referencing and outstanding
+  questions.
+· Versions are whole numbers: 1, 2, 3.
+  Not 4.1 or 9.1.
+· Each version contains a roadmap with
+  bugs, issues, patches.
+· Incremental versions (V9.1) begin only
+  after the multi-file switch.
+
+This is a new field. Human-AI Collab.
+We are making up the rules as we go along.
