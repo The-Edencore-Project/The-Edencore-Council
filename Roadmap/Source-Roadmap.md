@@ -435,6 +435,17 @@ the constitution.
   chatbot is a question
   first.
 
+- **Chunking.** The code is delivered in chunks of
+  100 to 500 LOC. The size is chosen by the section,
+  not by a fixed number. Soft target: 250–350.
+  Every chunk ends on a complete logical unit —
+  never mid-function, never mid-dict.
+- **Comment rule.** The only comments in V9 are
+  the chunk markers. Each chunk ends with a single
+  line: `# --- END CHUNK N ---`. Nothing else.
+  The constitution holds the prose. The code holds
+  the logic.
+
 ---
 
 ## 11. THE MULTIFILE WARNING
